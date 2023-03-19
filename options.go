@@ -3,7 +3,6 @@ package cassette
 import (
 	"time"
 
-	bsnet "github.com/ipfs/go-libipfs/bitswap/network"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -34,25 +33,24 @@ type (
 		maxWaitTimeout               time.Duration
 		findByMultihash              bool
 		messageSenderBuffer          int
-		messageSenderOpts            bsnet.MessageSenderOpts
 		recipientsRefreshInterval    time.Duration
+
+		maxBroadcastBatchSize int
+		maxBroadcastBatchWait time.Duration
 	}
 )
 
 func newOptions(o ...Option) (*options, error) {
 	opts := options{
-		httpListenAddr:      "0.0.0.0:40080",
-		ipniCascadeLabel:    "legacy",
-		httpAllowOrigin:     "*",
-		maxWaitTimeout:      5 * time.Second,
-		messageSenderBuffer: 100,
-		findByMultihash:     true,
-		messageSenderOpts: bsnet.MessageSenderOpts{
-			MaxRetries:       3,
-			SendTimeout:      10 * time.Second,
-			SendErrorBackoff: 100 * time.Millisecond,
-		},
+		httpListenAddr:            "0.0.0.0:40080",
+		ipniCascadeLabel:          "legacy",
+		httpAllowOrigin:           "*",
+		maxWaitTimeout:            5 * time.Second,
+		messageSenderBuffer:       100,
+		findByMultihash:           true,
 		recipientsRefreshInterval: 10 * time.Second,
+		maxBroadcastBatchSize:     100,
+		maxBroadcastBatchWait:     100 * time.Millisecond,
 	}
 	for _, apply := range o {
 		if err := apply(&opts); err != nil {
@@ -60,7 +58,6 @@ func newOptions(o ...Option) (*options, error) {
 		}
 	}
 
-	// var err error
 	if opts.h == nil {
 		manager, err := connmgr.NewConnManager(500, 5000)
 		if err != nil {
@@ -154,13 +151,6 @@ func WithFindByMultihash(b bool) Option {
 func WithMessageSenderBuffer(b int) Option {
 	return func(o *options) error {
 		o.messageSenderBuffer = b
-		return nil
-	}
-}
-
-func WithMessageSenderOpts(opts bsnet.MessageSenderOpts) Option {
-	return func(o *options) error {
-		o.messageSenderOpts = opts
 		return nil
 	}
 }
