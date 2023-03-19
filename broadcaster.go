@@ -8,7 +8,6 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libipfs/bitswap/message"
 	bitswap_message_pb "github.com/ipfs/go-libipfs/bitswap/message/pb"
-	"github.com/ipfs/go-libipfs/bitswap/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 )
@@ -31,13 +30,14 @@ type (
 		cids []cid.Cid
 	}
 	channeledSender struct {
-		ctx        context.Context
-		cancel     context.CancelFunc
-		id         peer.ID
-		outgoing   chan message.BitSwapMessage
-		sender     network.MessageSender
-		senderOpts network.MessageSenderOpts
-		b          *broadcaster
+		ctx          context.Context
+		cancel       context.CancelFunc
+		id           peer.ID
+		outgoing     chan []cid.Cid
+		c            *Cassette
+		unsentCids   map[cid.Cid]struct{}
+		maxBatchSize int
+		maxBatchWait *time.Ticker
 	}
 )
 
@@ -99,25 +99,11 @@ func (b *broadcaster) start(ctx context.Context) {
 			case cmd := <-b.mailbox:
 				switch c := cmd.(type) {
 				case findCids:
-					// Construct both possible flavours once to avoid generation per recipient to
-					// to reduce GC.
-					wantHave := message.New(false)
-					wantBlock := message.New(false)
-					for _, k := range c.cids {
-						wantHave.AddEntry(k, math.MaxInt32, bitswap_message_pb.Message_Wantlist_Have, false)
-						wantBlock.AddEntry(k, math.MaxInt32, bitswap_message_pb.Message_Wantlist_Block, false)
-					}
 					for _, recipient := range recipients {
-						var msg message.BitSwapMessage
-						if recipient.supportsHaves() {
-							msg = wantHave
-						} else {
-							msg = wantBlock
-						}
 						select {
 						case <-ctx.Done():
 							return
-						case recipient.outgoing <- msg:
+						case recipient.outgoing <- c.cids:
 						}
 					}
 				case addRecipient:
@@ -143,26 +129,22 @@ func (cs *channeledSender) start() {
 		select {
 		case <-cs.ctx.Done():
 			return
-		case msg, ok := <-cs.outgoing:
+		case cids, ok := <-cs.outgoing:
 			if !ok {
 				return
 			}
-			if cs.sender == nil {
-				var err error
-				cs.sender, err = cs.b.c.bsn.NewMessageSender(cs.ctx, cs.id, &cs.senderOpts)
-				if err != nil {
-					// TODO hook up to circuit breaker
-					logger.Errorw("Failed to instantiate sender", "to", cs.id, "err", err)
-					continue
+			for _, c := range cids {
+				if _, exists := cs.unsentCids[c]; !exists {
+					cs.unsentCids[c] = struct{}{}
 				}
 			}
-			if err := cs.sender.SendMsg(cs.ctx, msg); err != nil {
-				logger.Errorw("Failed to send message", "to", cs.id, "err", err)
+			if len(cs.unsentCids) >= cs.maxBatchSize {
+				cs.sendUnsent()
 			}
-			// TODO: basic tests show there is no point reusing sender; investigate further at load
-			//       for now, reset per send.
-			_ = cs.sender.Reset()
-			cs.sender = nil
+		case <-cs.maxBatchWait.C:
+			if len(cs.unsentCids) != 0 {
+				cs.sendUnsent()
+			}
 		}
 	}
 }
@@ -170,7 +152,7 @@ func (cs *channeledSender) start() {
 func (cs *channeledSender) supportsHaves() bool {
 	// TODO open stream to detect this as that is more reliable
 	// TODO cache supported protocol IDs for the recipient
-	protocols, err := cs.b.c.h.Peerstore().GetProtocols(cs.id)
+	protocols, err := cs.c.h.Peerstore().GetProtocols(cs.id)
 	if err != nil {
 		return false
 	}
@@ -187,12 +169,31 @@ func (cs *channeledSender) shutdown() {
 	close(cs.outgoing)
 }
 
+func (cs *channeledSender) sendUnsent() {
+	var wlt bitswap_message_pb.Message_Wantlist_WantType
+	if cs.supportsHaves() {
+		wlt = bitswap_message_pb.Message_Wantlist_Have
+	} else {
+		wlt = bitswap_message_pb.Message_Wantlist_Block
+	}
+	msg := message.New(false)
+	for c := range cs.unsentCids {
+		msg.AddEntry(c, math.MaxInt32, wlt, false)
+		delete(cs.unsentCids, c)
+	}
+	if err := cs.c.bsn.SendMessage(cs.ctx, cs.id, msg); err != nil {
+		logger.Errorw("Failed to send message", "to", cs.id, "err", err)
+	}
+}
+
 func (b *broadcaster) newChanneledSender(id peer.ID) *channeledSender {
 	cs := channeledSender{
-		id:         id,
-		senderOpts: b.c.messageSenderOpts,
-		outgoing:   make(chan message.BitSwapMessage, b.c.messageSenderBuffer),
-		b:          b,
+		id:           id,
+		outgoing:     make(chan []cid.Cid, b.c.messageSenderBuffer),
+		c:            b.c,
+		unsentCids:   make(map[cid.Cid]struct{}),
+		maxBatchSize: b.c.maxBroadcastBatchSize,
+		maxBatchWait: time.NewTicker(b.c.maxBroadcastBatchWait),
 	}
 	cs.ctx, cs.cancel = context.WithCancel(context.Background())
 	return &cs
