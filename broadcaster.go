@@ -166,6 +166,7 @@ func (cs *channeledSender) supportsHaves() bool {
 
 func (cs *channeledSender) shutdown() {
 	cs.cancel()
+	cs.maxBatchWait.Stop()
 	close(cs.outgoing)
 }
 

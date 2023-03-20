@@ -66,6 +66,7 @@ func (c *Cassette) Start(ctx context.Context) error {
 func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
 	rch := make(chan peer.AddrInfo, 1)
 	go func() {
+		ctx, cancel := context.WithTimeout(ctx, c.maxWaitTimeout)
 		unregister := c.r.registerFoundHook(ctx, k, func(id peer.ID) {
 			addrs := c.h.Peerstore().Addrs(id)
 			if len(addrs) > 0 {
@@ -77,14 +78,13 @@ func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
 			}
 		})
 		defer func() {
+			cancel()
 			unregister()
 			close(rch)
 		}()
 		targets := c.toFindTargets(k)
 		c.broadcaster.broadcastWant(targets)
-		ctx, cancel := context.WithTimeout(ctx, c.maxWaitTimeout)
 		<-ctx.Done()
-		cancel()
 		// TODO add option to stop based on provider count limit
 	}()
 	return rch
