@@ -150,8 +150,14 @@ func (cs *channeledSender) start() {
 }
 
 func (cs *channeledSender) supportsHaves() bool {
-	// TODO open stream to detect this as that is more reliable
-	// TODO cache supported protocol IDs for the recipient
+	// Assure connection to peer before checking protocols list. Otherwise, GetProtocols
+	// silently returns empty protocols list.
+	if addrs := cs.c.h.Peerstore().Addrs(cs.id); len(addrs) == 0 {
+		return false
+	} else if err := cs.c.h.Connect(cs.ctx, peer.AddrInfo{ID: cs.id, Addrs: addrs}); err != nil {
+		logger.Errorw("Failed to connect to peer in order to determine Want-Haves support", "peer", cs.id, "err", err)
+		return false
+	}
 	protocols, err := cs.c.h.Peerstore().GetProtocols(cs.id)
 	if err != nil {
 		return false
@@ -174,8 +180,13 @@ func (cs *channeledSender) sendUnsent() {
 	var wlt bitswap_message_pb.Message_Wantlist_WantType
 	if cs.supportsHaves() {
 		wlt = bitswap_message_pb.Message_Wantlist_Have
-	} else {
+	} else if cs.c.fallbackOnWantBlock {
 		wlt = bitswap_message_pb.Message_Wantlist_Block
+	} else {
+		logger.Warnw("Peer does not support Want-Haves and fallback on Want-Blocks is disabled. Skipping broadcast.", "peer", cs.id, "skipped", len(cs.unsentCids))
+		// Clear unsent CIDs.
+		cs.unsentCids = make(map[cid.Cid]struct{})
+		return
 	}
 	msg := message.New(false)
 	for c := range cs.unsentCids {
