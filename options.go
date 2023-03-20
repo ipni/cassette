@@ -20,6 +20,11 @@ var kuboBootstrapPeers = []string{
 	"/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
 }
 
+const (
+	defaultConnMngrLowWaterMark  = 0xff
+	defaultConnMngrHighWaterMark = 0xfff
+)
+
 type (
 	Option  func(*options) error
 	options struct {
@@ -34,6 +39,7 @@ type (
 		findByMultihash              bool
 		messageSenderBuffer          int
 		recipientsRefreshInterval    time.Duration
+		fallbackOnWantBlock          bool
 
 		maxBroadcastBatchSize int
 		maxBroadcastBatchWait time.Duration
@@ -49,6 +55,7 @@ func newOptions(o ...Option) (*options, error) {
 		messageSenderBuffer:       100,
 		findByMultihash:           true,
 		recipientsRefreshInterval: 10 * time.Second,
+		fallbackOnWantBlock:       true,
 		maxBroadcastBatchSize:     100,
 		maxBroadcastBatchWait:     100 * time.Millisecond,
 	}
@@ -59,7 +66,7 @@ func newOptions(o ...Option) (*options, error) {
 	}
 
 	if opts.h == nil {
-		manager, err := connmgr.NewConnManager(500, 5000)
+		manager, err := connmgr.NewConnManager(defaultConnMngrLowWaterMark, defaultConnMngrHighWaterMark)
 		if err != nil {
 			return nil, err
 		}
