@@ -27,17 +27,19 @@ type (
 		id peer.ID
 	}
 	findCids struct {
-		cids []cid.Cid
+		cids      []cid.Cid
+		timestamp time.Time
 	}
 	channeledSender struct {
-		ctx          context.Context
-		cancel       context.CancelFunc
-		id           peer.ID
-		outgoing     chan []cid.Cid
-		c            *Cassette
-		unsentCids   map[cid.Cid]struct{}
-		maxBatchSize int
-		maxBatchWait *time.Ticker
+		ctx             context.Context
+		cancel          context.CancelFunc
+		id              peer.ID
+		mailbox         chan findCids
+		c               *Cassette
+		unsentTimestamp time.Time
+		unsentCids      map[cid.Cid]struct{}
+		maxBatchSize    int
+		maxBatchWait    *time.Ticker
 	}
 )
 
@@ -54,6 +56,7 @@ func (b *broadcaster) start(ctx context.Context) {
 		refresh := func() {
 			logger.Info("Refreshing broadcast list...")
 			peers := b.c.h.Peerstore().Peers()
+			var count int
 			for _, id := range peers {
 				select {
 				case <-ctx.Done():
@@ -64,10 +67,11 @@ func (b *broadcaster) start(ctx context.Context) {
 						b.mailbox <- addRecipient{
 							id: id,
 						}
+						count++
 					}
 				}
 			}
-			logger.Infow("Broadcast list refreshed", "size", len(peers))
+			logger.Infow("Broadcast list refreshed", "size", count)
 		}
 		refresh()
 		for {
@@ -103,7 +107,8 @@ func (b *broadcaster) start(ctx context.Context) {
 						select {
 						case <-ctx.Done():
 							return
-						case recipient.outgoing <- c.cids:
+						case recipient.mailbox <- c:
+							b.c.metrics.notifyBroadcastRequested(ctx, int64(len(c.cids)))
 						}
 					}
 				case addRecipient:
@@ -113,10 +118,12 @@ func (b *broadcaster) start(ctx context.Context) {
 					cs := b.newChanneledSender(c.id)
 					go cs.start()
 					recipients[c.id] = cs
+					b.c.metrics.notifyBroadcastRecipientAdded(ctx)
 				case removeRecipient:
 					if cs, exists := recipients[c.id]; exists {
 						cs.shutdown()
 						delete(recipients, c.id)
+						b.c.metrics.notifyBroadcastRecipientRemoved(ctx)
 					}
 				}
 			}
@@ -129,11 +136,14 @@ func (cs *channeledSender) start() {
 		select {
 		case <-cs.ctx.Done():
 			return
-		case cids, ok := <-cs.outgoing:
+		case fc, ok := <-cs.mailbox:
 			if !ok {
 				return
 			}
-			for _, c := range cids {
+			if cs.unsentTimestamp.IsZero() || cs.unsentTimestamp.After(fc.timestamp) {
+				cs.unsentTimestamp = fc.timestamp
+			}
+			for _, c := range fc.cids {
 				if _, exists := cs.unsentCids[c]; !exists {
 					cs.unsentCids[c] = struct{}{}
 				}
@@ -173,19 +183,23 @@ func (cs *channeledSender) supportsHaves() bool {
 func (cs *channeledSender) shutdown() {
 	cs.cancel()
 	cs.maxBatchWait.Stop()
-	close(cs.outgoing)
+	close(cs.mailbox)
 }
 
 func (cs *channeledSender) sendUnsent() {
+	var wantHave bool
+	cidCount := int64(len(cs.unsentCids))
 	var wlt bitswap_message_pb.Message_Wantlist_WantType
 	if cs.supportsHaves() {
 		wlt = bitswap_message_pb.Message_Wantlist_Have
+		wantHave = true
 	} else if cs.c.fallbackOnWantBlock {
 		wlt = bitswap_message_pb.Message_Wantlist_Block
 	} else {
 		logger.Warnw("Peer does not support Want-Haves and fallback on Want-Blocks is disabled. Skipping broadcast.", "peer", cs.id, "skipped", len(cs.unsentCids))
 		// Clear unsent CIDs.
 		cs.unsentCids = make(map[cid.Cid]struct{})
+		cs.c.metrics.notifyBroadcastSkipped(cs.ctx, cidCount, time.Since(cs.unsentTimestamp))
 		return
 	}
 	msg := message.New(false)
@@ -195,13 +209,16 @@ func (cs *channeledSender) sendUnsent() {
 	}
 	if err := cs.c.bsn.SendMessage(cs.ctx, cs.id, msg); err != nil {
 		logger.Errorw("Failed to send message", "to", cs.id, "err", err)
+		cs.c.metrics.notifyBroadcastFailed(cs.ctx, cidCount, err, time.Since(cs.unsentTimestamp))
+	} else {
+		cs.c.metrics.notifyBroadcastSucceeded(cs.ctx, cidCount, wantHave, time.Since(cs.unsentTimestamp))
 	}
 }
 
 func (b *broadcaster) newChanneledSender(id peer.ID) *channeledSender {
 	cs := channeledSender{
 		id:           id,
-		outgoing:     make(chan []cid.Cid, b.c.messageSenderBuffer),
+		mailbox:      make(chan findCids, b.c.messageSenderBuffer),
 		c:            b.c,
 		unsentCids:   make(map[cid.Cid]struct{}),
 		maxBatchSize: b.c.maxBroadcastBatchSize,
@@ -212,5 +229,5 @@ func (b *broadcaster) newChanneledSender(id peer.ID) *channeledSender {
 }
 
 func (b *broadcaster) broadcastWant(c []cid.Cid) {
-	b.mailbox <- findCids{cids: c}
+	b.mailbox <- findCids{cids: c, timestamp: time.Now()}
 }
