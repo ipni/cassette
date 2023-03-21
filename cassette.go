@@ -2,13 +2,15 @@ package cassette
 
 import (
 	"context"
-	"net"
 	"net/http"
+	"sync/atomic"
+	"time"
 
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libipfs/bitswap/network"
 	"github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
 )
 
@@ -18,13 +20,15 @@ var (
 
 type Cassette struct {
 	*options
-	s *http.Server
+	server *http.Server
 	// Context and cancellation used to terminate streaming responses on shutdown.
 	ctx         context.Context
 	cancel      context.CancelFunc
 	bsn         network.BitSwapNetwork
 	r           *receiver
 	broadcaster *broadcaster
+
+	metrics *metrics
 }
 
 func New(o ...Option) (*Cassette, error) {
@@ -35,45 +39,63 @@ func New(o ...Option) (*Cassette, error) {
 	c := Cassette{
 		options: opts,
 	}
-	c.s = &http.Server{
+	c.server = &http.Server{
 		Addr:    opts.httpListenAddr,
 		Handler: c.serveMux(),
 	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
-	c.s.RegisterOnShutdown(c.cancel)
+	c.metrics, err = newMetrics(&c)
+	if err != nil {
+		return nil, err
+	}
 	return &c, nil
 }
 
 func (c *Cassette) Start(ctx context.Context) error {
+	if err := c.metrics.Start(ctx); err != nil {
+		return err
+	}
 	c.bsn = network.NewFromIpfsHost(c.h, nil)
 	var err error
-	c.r, err = newReceiver(c.findByMultihash)
+	c.r, err = newReceiver(c)
 	if err != nil {
 		return err
 	}
 	c.bsn.Start(c.r)
 	c.broadcaster = newBroadcaster(c)
 	c.broadcaster.start(ctx)
-	ln, err := net.Listen("tcp", c.s.Addr)
-	if err != nil {
-		return err
-	}
-	go func() { _ = c.s.Serve(ln) }()
-	logger.Infow("Server started", "id", c.h.ID(), "libp2pAddrs", c.h.Addrs(), "httpAddr", ln.Addr(), "protocols", c.h.Mux().Protocols())
+	c.server.RegisterOnShutdown(c.cancel)
+	go func() { _ = c.server.ListenAndServe() }()
+	logger.Infow("Lookup server started", "id", c.h.ID(), "libp2pAddrs", c.h.Addrs(), "httpAddr", c.server.Addr, "protocols", c.h.Mux().Protocols())
 	return nil
 }
 
 func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
+	start := time.Now()
+	c.metrics.notifyLookupRequested(ctx)
+	var timeToFirstProvider time.Duration
 	rch := make(chan peer.AddrInfo, 1)
 	go func() {
+		var resultCount atomic.Int64
 		ctx, cancel := context.WithTimeout(ctx, c.maxWaitTimeout)
+		providersSoFar := make(map[peer.ID]struct{})
 		unregister := c.r.registerFoundHook(ctx, k, func(id peer.ID) {
+			if _, seen := providersSoFar[id]; seen {
+				return
+			}
+			providersSoFar[id] = struct{}{}
 			addrs := c.h.Peerstore().Addrs(id)
+			if !c.addrFilterDisabled {
+				addrs = multiaddr.FilterAddrs(addrs, IsPubliclyDialableAddr)
+			}
 			if len(addrs) > 0 {
 				select {
 				case <-ctx.Done():
 					return
 				case rch <- peer.AddrInfo{ID: id, Addrs: addrs}:
+					if resultCount.Add(1) == 1 {
+						timeToFirstProvider = time.Since(start)
+					}
 				}
 			}
 		})
@@ -85,6 +107,7 @@ func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
 		targets := c.toFindTargets(k)
 		c.broadcaster.broadcastWant(targets)
 		<-ctx.Done()
+		c.metrics.notifyLookupResponded(context.Background(), resultCount.Load(), timeToFirstProvider, time.Since(start))
 		// TODO add option to stop based on provider count limit
 	}()
 	return rch
@@ -117,5 +140,6 @@ func (c *Cassette) toFindTargets(k cid.Cid) []cid.Cid {
 
 func (c *Cassette) Shutdown(ctx context.Context) error {
 	c.bsn.Stop()
-	return c.s.Shutdown(ctx)
+	_ = c.metrics.Shutdown(ctx)
+	return c.server.Shutdown(ctx)
 }

@@ -30,6 +30,8 @@ type (
 	options struct {
 		h                            host.Host
 		httpListenAddr               string
+		metricsHttpListenAddr        string
+		metricsEnablePprofDebug      bool
 		httpAllowOrigin              string
 		httpResponsePreferJson       bool
 		peers                        []peer.AddrInfo
@@ -40,6 +42,7 @@ type (
 		messageSenderBuffer          int
 		recipientsRefreshInterval    time.Duration
 		fallbackOnWantBlock          bool
+		addrFilterDisabled           bool
 
 		maxBroadcastBatchSize int
 		maxBroadcastBatchWait time.Duration
@@ -49,6 +52,8 @@ type (
 func newOptions(o ...Option) (*options, error) {
 	opts := options{
 		httpListenAddr:            "0.0.0.0:40080",
+		metricsHttpListenAddr:     "0.0.0.0:40081",
+		metricsEnablePprofDebug:   true,
 		ipniCascadeLabel:          "legacy",
 		httpAllowOrigin:           "*",
 		maxWaitTimeout:            5 * time.Second,

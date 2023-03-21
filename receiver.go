@@ -15,11 +15,11 @@ var _ network.Receiver = (*receiver)(nil)
 
 type (
 	receiver struct {
-		ctx             context.Context
-		cancel          context.CancelFunc
-		mailbox         chan any
-		nextID          atomic.Int64
-		findByMultihash bool
+		c       *Cassette
+		ctx     context.Context
+		cancel  context.CancelFunc
+		mailbox chan any
+		nextID  atomic.Int64
 	}
 	receivedMessageEvent struct {
 		k  string
@@ -36,10 +36,10 @@ type (
 	}
 )
 
-func newReceiver(findByMultihash bool) (*receiver, error) {
+func newReceiver(c *Cassette) (*receiver, error) {
 	var r receiver
 	r.ctx, r.cancel = context.WithCancel(context.Background())
-	r.findByMultihash = findByMultihash
+	r.c = c
 	r.mailbox = make(chan any)
 	go func() {
 		type registeredHook struct {
@@ -107,7 +107,7 @@ func newReceiver(findByMultihash bool) (*receiver, error) {
 }
 
 func (r *receiver) keyFromCid(c cid.Cid) string {
-	if r.findByMultihash {
+	if r.c.findByMultihash {
 		return string(c.Hash())
 	}
 	return c.String()
@@ -157,14 +157,17 @@ func (r *receiver) ReceiveMessage(ctx context.Context, sender peer.ID, in messag
 func (r *receiver) ReceiveError(err error) {
 	// TODO hook this up to circuit breakers?
 	logger.Errorw("Received Error", "err", err)
+	r.c.metrics.notifyReceiverErrored(r.ctx, err)
 }
 
 func (r *receiver) PeerConnected(id peer.ID) {
 	logger.Debugw("peer connected", "id", id)
+	r.c.metrics.notifyReceiverConnected(r.ctx)
 }
 
 func (r *receiver) PeerDisconnected(id peer.ID) {
 	logger.Debugw("peer disconnected", "id", id)
+	r.c.metrics.notifyReceiverDisconnected(r.ctx)
 }
 
 func (r *receiver) registerFoundHook(ctx context.Context, k cid.Cid, f func(id peer.ID)) func() {
