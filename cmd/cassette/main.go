@@ -22,7 +22,7 @@ func main() {
 		_ = log.SetLogLevel("*", *logLevel)
 		_ = log.SetLogLevel("net/identify", "error")
 	}
-	*config = "config.yaml"
+
 	var opts []cassette.Option
 	if *config != "" {
 		cfg, err := internal.NewConfig(*config)
