@@ -37,9 +37,9 @@ type (
 		peers                        []peer.AddrInfo
 		ipniCascadeLabel             string
 		ipniRequireCascadeQueryParam bool
-		maxWaitTimeout               time.Duration
+		responseTimeout              time.Duration
 		findByMultihash              bool
-		messageSenderBuffer          int
+		broadcastSendChannelBuffer   int
 		recipientsRefreshInterval    time.Duration
 		fallbackOnWantBlock          bool
 		addrFilterDisabled           bool
@@ -51,18 +51,18 @@ type (
 
 func newOptions(o ...Option) (*options, error) {
 	opts := options{
-		httpListenAddr:            "0.0.0.0:40080",
-		metricsHttpListenAddr:     "0.0.0.0:40081",
-		metricsEnablePprofDebug:   true,
-		ipniCascadeLabel:          "legacy",
-		httpAllowOrigin:           "*",
-		maxWaitTimeout:            5 * time.Second,
-		messageSenderBuffer:       100,
-		findByMultihash:           true,
-		recipientsRefreshInterval: 10 * time.Second,
-		fallbackOnWantBlock:       true,
-		maxBroadcastBatchSize:     100,
-		maxBroadcastBatchWait:     100 * time.Millisecond,
+		httpListenAddr:             "0.0.0.0:40080",
+		metricsHttpListenAddr:      "0.0.0.0:40081",
+		metricsEnablePprofDebug:    true,
+		ipniCascadeLabel:           "legacy",
+		httpAllowOrigin:            "*",
+		responseTimeout:            5 * time.Second,
+		broadcastSendChannelBuffer: 100,
+		findByMultihash:            true,
+		recipientsRefreshInterval:  10 * time.Second,
+		fallbackOnWantBlock:        true,
+		maxBroadcastBatchSize:      100,
+		maxBroadcastBatchWait:      100 * time.Millisecond,
 	}
 	for _, apply := range o {
 		if err := apply(&opts); err != nil {
@@ -91,9 +91,9 @@ func newOptions(o ...Option) (*options, error) {
 			}
 			opts.peers = append(opts.peers, *ai)
 		}
-		for _, p := range opts.peers {
-			opts.h.Peerstore().AddAddrs(p.ID, p.Addrs, peerstore.PermanentAddrTTL)
-		}
+	}
+	for _, p := range opts.peers {
+		opts.h.Peerstore().AddAddrs(p.ID, p.Addrs, peerstore.PermanentAddrTTL)
 	}
 	return &opts, nil
 }
@@ -111,10 +111,22 @@ func WithHttpListenAddr(a string) Option {
 		return nil
 	}
 }
-
-func WithPeers(p ...peer.AddrInfo) Option {
+func WithMetricsListenAddr(a string) Option {
 	return func(o *options) error {
-		o.peers = p
+		o.metricsHttpListenAddr = a
+		return nil
+	}
+}
+
+func WithPeerStrings(p ...string) Option {
+	return func(o *options) error {
+		for _, a := range p {
+			ai, err := peer.AddrInfoFromString(a)
+			if err != nil {
+				return err
+			}
+			o.peers = append(o.peers, *ai)
+		}
 		return nil
 	}
 }
@@ -160,16 +172,51 @@ func WithFindByMultihash(b bool) Option {
 	}
 }
 
-func WithMessageSenderBuffer(b int) Option {
+func WithDisableAddrFilter(b bool) Option {
 	return func(o *options) error {
-		o.messageSenderBuffer = b
+		o.addrFilterDisabled = b
 		return nil
 	}
 }
 
-func WithMaxWaitTimeout(d time.Duration) Option {
+func WithMetricsEnablePprofDebug(b bool) Option {
 	return func(o *options) error {
-		o.maxWaitTimeout = d
+		o.metricsEnablePprofDebug = b
+		return nil
+	}
+}
+
+func WithBroadcastSendChannelBuffer(b int) Option {
+	return func(o *options) error {
+		o.broadcastSendChannelBuffer = b
+		return nil
+	}
+}
+
+func WithFallbackOnWantBlock(b bool) Option {
+	return func(o *options) error {
+		o.fallbackOnWantBlock = b
+		return nil
+	}
+}
+
+func WithMaxBroadcastBatchSize(b int) Option {
+	return func(o *options) error {
+		o.maxBroadcastBatchSize = b
+		return nil
+	}
+}
+
+func WithMaxBroadcastBatchWait(d time.Duration) Option {
+	return func(o *options) error {
+		o.maxBroadcastBatchWait = d
+		return nil
+	}
+}
+
+func WithResponseTimeout(d time.Duration) Option {
+	return func(o *options) error {
+		o.responseTimeout = d
 		return nil
 	}
 }
