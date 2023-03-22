@@ -77,7 +77,7 @@ func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
 	rch := make(chan peer.AddrInfo, 1)
 	go func() {
 		var resultCount atomic.Int64
-		ctx, cancel := context.WithTimeout(ctx, c.maxWaitTimeout)
+		ctx, cancel := context.WithTimeout(ctx, c.responseTimeout)
 		providersSoFar := make(map[peer.ID]struct{})
 		unregister := c.r.registerFoundHook(ctx, k, func(id peer.ID) {
 			if _, seen := providersSoFar[id]; seen {

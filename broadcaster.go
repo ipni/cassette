@@ -218,7 +218,7 @@ func (cs *channeledSender) sendUnsent() {
 func (b *broadcaster) newChanneledSender(id peer.ID) *channeledSender {
 	cs := channeledSender{
 		id:           id,
-		mailbox:      make(chan findCids, b.c.messageSenderBuffer),
+		mailbox:      make(chan findCids, b.c.broadcastSendChannelBuffer),
 		c:            b.c,
 		unsentCids:   make(map[cid.Cid]struct{}),
 		maxBatchSize: b.c.maxBroadcastBatchSize,
