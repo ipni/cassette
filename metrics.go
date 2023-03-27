@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/prometheus"
@@ -35,6 +36,7 @@ type metrics struct {
 
 	receiverErrorCounter            instrument.Int64Counter
 	receiverConnectionUpDownCounter instrument.Int64UpDownCounter
+	receiverMessageCounter          instrument.Int64Counter
 }
 
 func newMetrics(c *Cassette) (*metrics, error) {
@@ -143,6 +145,13 @@ func (m *metrics) Start(ctx context.Context) error {
 	); err != nil {
 		return err
 	}
+	if m.receiverMessageCounter, err = meter.Int64Counter(
+		"ipni/cassette/receiver_message_count",
+		instrument.WithUnit("1"),
+		instrument.WithDescription("The number of messages observed by BitSwap receiver."),
+	); err != nil {
+		return err
+	}
 
 	m.server.Handler = m.serveMux()
 	go func() { _ = m.server.ListenAndServe() }()
@@ -187,9 +196,9 @@ func (m *metrics) notifyBroadcastFailed(ctx context.Context, batchSize int64, er
 	m.broadcastInFlightUpDownCounter.Add(ctx, -batchSize)
 }
 
-func (m *metrics) notifyBroadcastSucceeded(ctx context.Context, batchSize int64, wantHaves bool, inFlightTime time.Duration) {
+func (m *metrics) notifyBroadcastSucceeded(ctx context.Context, batchSize int64, wantHave bool, inFlightTime time.Duration) {
 	m.broadcastInFlightTimeHistogram.Record(ctx, inFlightTime.Milliseconds(), attribute.String("status", "succeeded"))
-	m.broadcastBatchSizeHistogram.Record(ctx, batchSize)
+	m.broadcastBatchSizeHistogram.Record(ctx, batchSize, attribute.Bool("want-have", wantHave))
 	m.broadcastInFlightUpDownCounter.Add(ctx, -batchSize)
 }
 
@@ -214,6 +223,13 @@ func (m *metrics) notifyReceiverConnected(ctx context.Context) {
 
 func (m *metrics) notifyReceiverDisconnected(ctx context.Context) {
 	m.receiverConnectionUpDownCounter.Add(ctx, -1)
+}
+
+func (m *metrics) notifyReceiverMessageReceived(ctx context.Context, sender peer.ID) {
+	// TODO: It is OK to use prometheus for counting messages received per sender.
+	//       Because, there is a handful of recipients. Once the number of senders increase beyond
+	//       10s we should expose a dedicated HTTP api for querying sender rankings.
+	m.receiverMessageCounter.Add(ctx, 1, attribute.String("sender", sender.String()))
 }
 
 func (m *metrics) notifyLookupRequested(ctx context.Context) {

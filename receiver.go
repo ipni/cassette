@@ -22,8 +22,8 @@ type (
 		nextID  atomic.Int64
 	}
 	receivedMessageEvent struct {
-		k  string
-		id peer.ID
+		k    string
+		from peer.ID
 	}
 	registerHook struct {
 		id   int64
@@ -57,7 +57,7 @@ func newReceiver(c *Cassette) (*receiver, error) {
 				}
 				switch ee := e.(type) {
 				case receivedMessageEvent:
-
+					c.metrics.notifyReceiverMessageReceived(r.ctx, ee.from)
 					hooks, ok := registry[ee.k]
 					if ok && hooks != nil {
 						for _, hook := range hooks {
@@ -66,7 +66,7 @@ func newReceiver(c *Cassette) (*receiver, error) {
 								return
 							default:
 								if hook != nil {
-									hook.hook(ee.id)
+									hook.hook(ee.from)
 								}
 							}
 						}
@@ -120,8 +120,8 @@ func (r *receiver) ReceiveMessage(ctx context.Context, sender peer.ID, in messag
 			case <-ctx.Done():
 				return
 			case r.mailbox <- receivedMessageEvent{
-				k:  r.keyFromCid(c),
-				id: sender,
+				k:    r.keyFromCid(c),
+				from: sender,
 			}:
 			}
 		}
@@ -133,8 +133,8 @@ func (r *receiver) ReceiveMessage(ctx context.Context, sender peer.ID, in messag
 				case <-ctx.Done():
 					return
 				case r.mailbox <- receivedMessageEvent{
-					k:  r.keyFromCid(c.Cid),
-					id: sender,
+					k:    r.keyFromCid(c.Cid),
+					from: sender,
 				}:
 				}
 			}
@@ -146,8 +146,8 @@ func (r *receiver) ReceiveMessage(ctx context.Context, sender peer.ID, in messag
 			case <-ctx.Done():
 				return
 			case r.mailbox <- receivedMessageEvent{
-				k:  r.keyFromCid(c.Cid()),
-				id: sender,
+				k:    r.keyFromCid(c.Cid()),
+				from: sender,
 			}:
 			}
 		}
