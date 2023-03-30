@@ -10,6 +10,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/prometheus"
@@ -256,6 +257,8 @@ func errKindAttribute(err error) attribute.KeyValue {
 		errKind = "stream-reset"
 	case errors.Is(err, network.ErrResourceLimitExceeded):
 		errKind = "resource-limit"
+	case errors.Is(err, swarm.ErrDialBackoff):
+		errKind = "dial-backoff"
 	default:
 		errKind = "other"
 	}
