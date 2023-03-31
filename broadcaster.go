@@ -187,6 +187,9 @@ func (cs *channeledSender) shutdown() {
 }
 
 func (cs *channeledSender) sendUnsent() {
+	defer func() {
+		cs.unsentTimestamp = time.Now()
+	}()
 	var wantHave bool
 	cidCount := int64(len(cs.unsentCids))
 	var wlt bitswap_message_pb.Message_Wantlist_WantType
