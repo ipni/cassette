@@ -260,7 +260,21 @@ func errKindAttribute(err error) attribute.KeyValue {
 	case errors.Is(err, swarm.ErrDialBackoff):
 		errKind = "dial-backoff"
 	default:
-		errKind = "other"
+		// Unwrap for DialError only checks `Cause` which seems to be nil in dial errors.
+		// Instead, the errors are added to the field DialErrors and those errors are not
+		// checked in unwrap. Hence the hack below.
+		switch e := err.(type) {
+		case *swarm.DialError:
+			errKind = "dial-error"
+			for _, de := range e.DialErrors {
+				if de.Cause.Error() == "dial backoff" {
+					errKind = "dial-backoff"
+					break
+				}
+			}
+		default:
+			errKind = "other"
+		}
 	}
 	return attribute.String("error-kind", errKind)
 }
