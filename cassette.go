@@ -27,6 +27,7 @@ type Cassette struct {
 	bsn         network.BitSwapNetwork
 	r           *receiver
 	broadcaster *broadcaster
+	discoverer  *peerDiscoverer
 
 	metrics *metrics
 }
@@ -62,6 +63,10 @@ func (c *Cassette) Start(ctx context.Context) error {
 		return err
 	}
 	c.bsn.Start(c.r)
+	c.discoverer = newPeerDiscoverer(c)
+	if err := c.discoverer.start(ctx); err != nil {
+		return err
+	}
 	c.broadcaster = newBroadcaster(c)
 	c.broadcaster.start(ctx)
 	c.server.RegisterOnShutdown(c.cancel)

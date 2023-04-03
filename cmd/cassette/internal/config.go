@@ -54,6 +54,8 @@ type Config struct {
 		FallbackOnWantBlock        *bool          `yaml:"fallbackOnWantBlock"`
 		RecipientsRefreshInterval  *time.Duration `yaml:"recipientsRefreshInterval"`
 		BroadcastSendChannelBuffer *int           `yaml:"sendChannelBuffer"`
+		PeerDiscoveryInterval      *time.Duration `yaml:"peerDiscoveryInterval"`
+		PeerDiscoveryAddrTTL       *time.Duration `yaml:"peerDiscoveryAddrTTL"`
 	} `yaml:"bitswap"`
 }
 
@@ -188,6 +190,12 @@ func (c *Config) ToOptions() ([]cassette.Option, error) {
 		}
 		if c.Bitswap.BroadcastSendChannelBuffer != nil {
 			opts = append(opts, cassette.WithBroadcastSendChannelBuffer(*c.Bitswap.BroadcastSendChannelBuffer))
+		}
+		if c.Bitswap.PeerDiscoveryInterval != nil {
+			opts = append(opts, cassette.WithPeerDiscoveryInterval(*c.Bitswap.PeerDiscoveryInterval))
+		}
+		if c.Bitswap.PeerDiscoveryAddrTTL != nil {
+			opts = append(opts, cassette.WithPeerDiscoveryAddrTTL(*c.Bitswap.PeerDiscoveryAddrTTL))
 		}
 	}
 	return opts, nil
