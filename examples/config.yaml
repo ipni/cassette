@@ -21,7 +21,7 @@ ipni:
   httpAllowOrigin: '*'
   preferJsonResponse: false
   cascadeLabel: legacy
-  requireCascadeQueryParam: true
+  requireCascadeQueryParam: false
   responseTimeout: 5s
   findByMultihash: true
   disableAddrFilter: false
@@ -30,16 +30,17 @@ metrics:
   enablePprofDebug: true
 bitswap:
   peers:
+    # Example static addrs.
     - '/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN'
     - '/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa'
     - '/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb'
     - '/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt'
-    # mars.i.ipfs.io
-    - '/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ'
-    # mars.i.ipfs.io
-    - '/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ'
+    # Example dynamic addrs auto discovered by lookup over IPFS DHT.
+    - '/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ'
   maxBroadcastBatchSize: 100
   maxBroadcastBatchWait: 100ms
   fallbackOnWantBlock: true
   recipientsRefreshInterval: 10s
   sendChannelBuffer: 100
+  peerDiscoveryInterval: 10s
+  peerDiscoveryAddrTTL: 10m

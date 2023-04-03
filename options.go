@@ -46,6 +46,10 @@ type (
 
 		maxBroadcastBatchSize int
 		maxBroadcastBatchWait time.Duration
+
+		peerDiscoveryHost     host.Host
+		peerDiscoveryInterval time.Duration
+		peerDiscoveryAddrTTL  time.Duration
 	}
 )
 
@@ -63,13 +67,15 @@ func newOptions(o ...Option) (*options, error) {
 		fallbackOnWantBlock:        true,
 		maxBroadcastBatchSize:      100,
 		maxBroadcastBatchWait:      100 * time.Millisecond,
+		peerDiscoveryInterval:      10 * time.Second,
+		peerDiscoveryAddrTTL:       10 * time.Minute,
 	}
 	for _, apply := range o {
 		if err := apply(&opts); err != nil {
 			return nil, err
 		}
 	}
-
+	var err error
 	if opts.h == nil {
 		manager, err := connmgr.NewConnManager(defaultConnMngrLowWaterMark, defaultConnMngrHighWaterMark)
 		if err != nil {
@@ -93,7 +99,22 @@ func newOptions(o ...Option) (*options, error) {
 		}
 	}
 	for _, p := range opts.peers {
-		opts.h.Peerstore().AddAddrs(p.ID, p.Addrs, peerstore.PermanentAddrTTL)
+		if len(p.Addrs) != 0 {
+			opts.h.Peerstore().AddAddrs(p.ID, p.Addrs, peerstore.PermanentAddrTTL)
+		}
+	}
+	if opts.peerDiscoveryHost == nil {
+		// Use a separate host for peer discovery, because it uses DHT client to find addrs.
+		// DHT client updates the peerstore with discovered peers as part of routing table
+		// maintenance, and broadcaster broadcasts to all peers in the peerstore.
+		// Therefore, separating the hosts to keep the subset of peers we broadcast to limited to:
+		// 1. ones that are added in the peers list,
+		// 2. ones the address for which is discovered via peer discovery, and
+		// 3. ones that explicitly peer with the cassette host.
+		opts.peerDiscoveryHost, err = libp2p.New()
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &opts, nil
 }
@@ -224,6 +245,27 @@ func WithResponseTimeout(d time.Duration) Option {
 func WithRecipientsRefreshInterval(d time.Duration) Option {
 	return func(o *options) error {
 		o.recipientsRefreshInterval = d
+		return nil
+	}
+}
+
+func WithPeerDiscoveryHost(h host.Host) Option {
+	return func(o *options) error {
+		o.peerDiscoveryHost = h
+		return nil
+	}
+}
+
+func WithPeerDiscoveryInterval(d time.Duration) Option {
+	return func(o *options) error {
+		o.peerDiscoveryInterval = d
+		return nil
+	}
+}
+
+func WithPeerDiscoveryAddrTTL(d time.Duration) Option {
+	return func(o *options) error {
+		o.peerDiscoveryAddrTTL = d
 		return nil
 	}
 }
