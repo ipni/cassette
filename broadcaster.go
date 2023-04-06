@@ -10,6 +10,7 @@ import (
 	bitswap_message_pb "github.com/ipfs/go-libipfs/bitswap/message/pb"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/mercari/go-circuitbreaker"
 )
 
 var bitswapOneTwo protocol.ID = "/ipfs/bitswap/1.2.0"
@@ -40,6 +41,7 @@ type (
 		unsentCids      map[cid.Cid]struct{}
 		maxBatchSize    int
 		maxBatchWait    *time.Ticker
+		cb              *circuitbreaker.CircuitBreaker
 	}
 )
 
@@ -190,8 +192,12 @@ func (cs *channeledSender) sendUnsent() {
 	defer func() {
 		cs.unsentTimestamp = time.Now()
 	}()
-	var wantHave bool
 	cidCount := int64(len(cs.unsentCids))
+	if !cs.cb.Ready() {
+		cs.c.metrics.notifyBroadcastFailed(cs.ctx, cidCount, circuitbreaker.ErrOpen, time.Since(cs.unsentTimestamp))
+		return
+	}
+	var wantHave bool
 	var wlt bitswap_message_pb.Message_Wantlist_WantType
 	if cs.supportsHaves() {
 		wlt = bitswap_message_pb.Message_Wantlist_Have
@@ -203,8 +209,13 @@ func (cs *channeledSender) sendUnsent() {
 		// Clear unsent CIDs.
 		cs.unsentCids = make(map[cid.Cid]struct{})
 		cs.c.metrics.notifyBroadcastSkipped(cs.ctx, cidCount, time.Since(cs.unsentTimestamp))
+
+		// Fail the Circuit Breaker to avoid checking whether the recipient supports Want-Haves on every send, since
+		// it is a characteristic that does not change often.
+		cs.cb.Fail()
 		return
 	}
+
 	msg := message.New(false)
 	for c := range cs.unsentCids {
 		msg.AddEntry(c, math.MaxInt32, wlt, false)
@@ -213,8 +224,15 @@ func (cs *channeledSender) sendUnsent() {
 	if err := cs.c.bsn.SendMessage(cs.ctx, cs.id, msg); err != nil {
 		logger.Errorw("Failed to send message", "to", cs.id, "err", err)
 		cs.c.metrics.notifyBroadcastFailed(cs.ctx, cidCount, err, time.Since(cs.unsentTimestamp))
+		// SendMessage wraps the context internally with configured bitswap timeouts.
+		// Therefore, calling FailWithContext on Circuit Breaker will have no effect if deadline exceeds and would fail
+		// the Circuit Breaker regardless of what the WithFailOnContextDeadline option is set to.
+		// This is fine since we do want it to fail.
+		// Regardless, do call FailWithContext so that the WithFailOnContextCancel is respected.
+		cs.cb.FailWithContext(cs.ctx)
 	} else {
 		cs.c.metrics.notifyBroadcastSucceeded(cs.ctx, cidCount, wantHave, time.Since(cs.unsentTimestamp))
+		cs.cb.Success()
 	}
 }
 
@@ -228,6 +246,20 @@ func (b *broadcaster) newChanneledSender(id peer.ID) *channeledSender {
 		maxBatchWait: time.NewTicker(b.c.maxBroadcastBatchWait),
 	}
 	cs.ctx, cs.cancel = context.WithCancel(context.Background())
+
+	cs.cb = circuitbreaker.New(
+		circuitbreaker.WithFailOnContextCancel(b.c.recipientCBFailOnContextCancel),
+		circuitbreaker.WithFailOnContextDeadline(b.c.recipientCBFailOnContextDeadline),
+		circuitbreaker.WithHalfOpenMaxSuccesses(b.c.recipientCBHalfOpenMaxSuccesses),
+		circuitbreaker.WithOpenTimeoutBackOff(b.c.recipientCBOpenTimeoutBackOff),
+		circuitbreaker.WithOpenTimeout(b.c.recipientCBOpenTimeout),
+		circuitbreaker.WithCounterResetInterval(b.c.recipientCBCounterResetInterval),
+		circuitbreaker.WithTripFunc(b.c.recipientCBTripFunc),
+		circuitbreaker.WithOnStateChangeHookFn(func(from, to circuitbreaker.State) {
+			b.c.metrics.notifyBroadcastRecipientCBStateChanged(cs.ctx, id, from, to)
+			logger.Infow("Broadcast recipient circuit breaker state changed", "recipient", id, "from", from, "to", to)
+		}),
+	)
 	return &cs
 }
 
