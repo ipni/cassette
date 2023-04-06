@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/net/swarm"
+	"github.com/mercari/go-circuitbreaker"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/prometheus"
@@ -28,12 +29,13 @@ type metrics struct {
 	lookupResponseResultCountHistogram instrument.Int64Histogram
 	lookupResponseLatencyHistogram     instrument.Int64Histogram
 
-	broadcastInFlightTimeHistogram   instrument.Int64Histogram
-	broadcastBatchSizeHistogram      instrument.Int64Histogram
-	broadcastSkipCounter             instrument.Int64Counter
-	broadcastFailureCounter          instrument.Int64Counter
-	broadcastRecipientsUpDownCounter instrument.Int64UpDownCounter
-	broadcastInFlightUpDownCounter   instrument.Int64UpDownCounter
+	broadcastInFlightTimeHistogram          instrument.Int64Histogram
+	broadcastBatchSizeHistogram             instrument.Int64Histogram
+	broadcastSkipCounter                    instrument.Int64Counter
+	broadcastFailureCounter                 instrument.Int64Counter
+	broadcastRecipientsUpDownCounter        instrument.Int64UpDownCounter
+	broadcastRecipientsCBStateUpDownCounter instrument.Int64UpDownCounter
+	broadcastInFlightUpDownCounter          instrument.Int64UpDownCounter
 
 	receiverErrorCounter            instrument.Int64Counter
 	receiverConnectionUpDownCounter instrument.Int64UpDownCounter
@@ -51,7 +53,7 @@ func newMetrics(c *Cassette) (*metrics, error) {
 	return &m, nil
 }
 
-func (m *metrics) Start(ctx context.Context) error {
+func (m *metrics) Start(_ context.Context) error {
 	var err error
 	if m.exporter, err = prometheus.New(
 		prometheus.WithoutUnits(),
@@ -122,6 +124,13 @@ func (m *metrics) Start(ctx context.Context) error {
 		"ipni/cassette/broadcast_recipients_count",
 		instrument.WithUnit("1"),
 		instrument.WithDescription("The number of broadcast recipients."),
+	); err != nil {
+		return err
+	}
+	if m.broadcastRecipientsCBStateUpDownCounter, err = meter.Int64UpDownCounter(
+		"ipni/cassette/broadcast_recipients_cb_state_count",
+		instrument.WithUnit("1"),
+		instrument.WithDescription("The broadcast recipients circuit breaker state count."),
 	); err != nil {
 		return err
 	}
@@ -210,6 +219,13 @@ func (m *metrics) notifyBroadcastRequested(ctx context.Context, cidCount int64) 
 func (m *metrics) notifyBroadcastRecipientAdded(ctx context.Context) {
 	m.broadcastRecipientsUpDownCounter.Add(ctx, 1)
 }
+
+func (m *metrics) notifyBroadcastRecipientCBStateChanged(ctx context.Context, pid peer.ID, from, to circuitbreaker.State) {
+	recipient := attribute.String("recipient", pid.String())
+	m.broadcastRecipientsCBStateUpDownCounter.Add(ctx, -1, attribute.String("state", string(from)), recipient)
+	m.broadcastRecipientsCBStateUpDownCounter.Add(ctx, 1, attribute.String("state", string(to)), recipient)
+}
+
 func (m *metrics) notifyBroadcastRecipientRemoved(ctx context.Context) {
 	m.broadcastRecipientsUpDownCounter.Add(ctx, -1)
 }
@@ -259,6 +275,8 @@ func errKindAttribute(err error) attribute.KeyValue {
 		errKind = "resource-limit"
 	case errors.Is(err, swarm.ErrDialBackoff):
 		errKind = "dial-backoff"
+	case errors.Is(err, circuitbreaker.ErrOpen):
+		errKind = "cb-open"
 	default:
 		// Unwrap for DialError only checks `Cause` which seems to be nil in dial errors.
 		// Instead, the errors are added to the field DialErrors and those errors are not

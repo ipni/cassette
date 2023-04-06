@@ -44,3 +44,12 @@ bitswap:
   sendChannelBuffer: 100
   peerDiscoveryInterval: 10s
   peerDiscoveryAddrTTL: 10m
+  recipientCBTripFunc:
+    consecutiveFailures: 10
+  recipientCBCounterResetInterval: 10s
+  recipientCBFailOnContextCancel: false
+  recipientCBFailOnContextDeadline: true
+  recipientCBHalfOpenMaxSuccesses: 10
+  recipientCBOpenTimeout: 1s
+  recipientCBOpenTimeoutBackOff:
+    exponential: {}

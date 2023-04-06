@@ -3,11 +3,13 @@ module github.com/ipni/cassette
 go 1.19
 
 require (
+	github.com/cenkalti/backoff/v3 v3.1.1
 	github.com/ipfs/go-cid v0.3.2
 	github.com/ipfs/go-libipfs v0.6.1
 	github.com/ipfs/go-log/v2 v2.5.1
 	github.com/libp2p/go-libp2p v0.26.2
 	github.com/libp2p/go-libp2p-kad-dht v0.21.0
+	github.com/mercari/go-circuitbreaker v0.0.2
 	github.com/multiformats/go-multiaddr v0.8.0
 	github.com/multiformats/go-multicodec v0.7.0
 	github.com/multiformats/go-multihash v0.2.1

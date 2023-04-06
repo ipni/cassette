@@ -3,12 +3,14 @@ package cassette
 import (
 	"time"
 
+	"github.com/cenkalti/backoff/v3"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/mercari/go-circuitbreaker"
 )
 
 var kuboBootstrapPeers = []string{
@@ -44,6 +46,14 @@ type (
 		fallbackOnWantBlock          bool
 		addrFilterDisabled           bool
 
+		recipientCBTripFunc              circuitbreaker.TripFunc
+		recipientCBCounterResetInterval  time.Duration
+		recipientCBFailOnContextCancel   bool
+		recipientCBFailOnContextDeadline bool
+		recipientCBHalfOpenMaxSuccesses  int64
+		recipientCBOpenTimeoutBackOff    backoff.BackOff
+		recipientCBOpenTimeout           time.Duration
+
 		maxBroadcastBatchSize int
 		maxBroadcastBatchWait time.Duration
 
@@ -69,6 +79,14 @@ func newOptions(o ...Option) (*options, error) {
 		maxBroadcastBatchWait:      100 * time.Millisecond,
 		peerDiscoveryInterval:      10 * time.Second,
 		peerDiscoveryAddrTTL:       10 * time.Minute,
+
+		recipientCBTripFunc:              circuitbreaker.NewTripFuncConsecutiveFailures(3),
+		recipientCBCounterResetInterval:  2 * time.Second,
+		recipientCBFailOnContextCancel:   false,
+		recipientCBFailOnContextDeadline: true,
+		recipientCBHalfOpenMaxSuccesses:  5,
+		recipientCBOpenTimeoutBackOff:    circuitbreaker.DefaultOpenBackOff(),
+		recipientCBOpenTimeout:           5 * time.Second,
 	}
 	for _, apply := range o {
 		if err := apply(&opts); err != nil {
@@ -132,6 +150,7 @@ func WithHttpListenAddr(a string) Option {
 		return nil
 	}
 }
+
 func WithMetricsListenAddr(a string) Option {
 	return func(o *options) error {
 		o.metricsHttpListenAddr = a
@@ -266,6 +285,55 @@ func WithPeerDiscoveryInterval(d time.Duration) Option {
 func WithPeerDiscoveryAddrTTL(d time.Duration) Option {
 	return func(o *options) error {
 		o.peerDiscoveryAddrTTL = d
+		return nil
+	}
+}
+
+func WithRecipientCBTripFunc(t circuitbreaker.TripFunc) Option {
+	return func(o *options) error {
+		o.recipientCBTripFunc = t
+		return nil
+	}
+}
+
+func WithRecipientCBCounterResetInterval(c time.Duration) Option {
+	return func(o *options) error {
+		o.recipientCBCounterResetInterval = c
+		return nil
+	}
+}
+
+func WithRecipientCBFailOnContextCancel(f bool) Option {
+	return func(o *options) error {
+		o.recipientCBFailOnContextCancel = f
+		return nil
+	}
+}
+
+func WithRecipientCBFailOnContextDeadline(f bool) Option {
+	return func(o *options) error {
+		o.recipientCBFailOnContextDeadline = f
+		return nil
+	}
+}
+
+func WithRecipientCBHalfOpenMaxSuccesses(h int64) Option {
+	return func(o *options) error {
+		o.recipientCBHalfOpenMaxSuccesses = h
+		return nil
+	}
+}
+
+func WithRecipientCBOpenTimeoutBackOff(b backoff.BackOff) Option {
+	return func(o *options) error {
+		o.recipientCBOpenTimeoutBackOff = b
+		return nil
+	}
+}
+
+func WithRecipientCBOpenTimeout(t time.Duration) Option {
+	return func(o *options) error {
+		o.recipientCBOpenTimeout = t
 		return nil
 	}
 }

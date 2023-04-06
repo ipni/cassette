@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cenkalti/backoff/v3"
 	"github.com/ipfs/go-log/v2"
 	"github.com/ipni/cassette"
 	"github.com/libp2p/go-libp2p"
@@ -12,6 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/mercari/go-circuitbreaker"
 	"gopkg.in/yaml.v2"
 )
 
@@ -56,6 +58,26 @@ type Config struct {
 		BroadcastSendChannelBuffer *int           `yaml:"sendChannelBuffer"`
 		PeerDiscoveryInterval      *time.Duration `yaml:"peerDiscoveryInterval"`
 		PeerDiscoveryAddrTTL       *time.Duration `yaml:"peerDiscoveryAddrTTL"`
+
+		RecipientCBTripFunc *struct {
+			Threshold   *int64 `yaml:"threshold"`
+			FailureRate *struct {
+				Min  *int64   `json:"min,omitempty"`
+				Rate *float64 `json:"rate,omitempty"`
+			} `yaml:"failureRate"`
+			ConsecutiveFailures *int64 `yaml:"consecutiveFailures"`
+		} `yaml:"recipientCBTripFunc"`
+		RecipientCBCounterResetInterval  *time.Duration `yaml:"recipientCBCounterResetInterval"`
+		RecipientCBFailOnContextCancel   *bool          `yaml:"recipientCBFailOnContextCancel"`
+		RecipientCBFailOnContextDeadline *bool          `yaml:"recipientCBFailOnContextDeadline"`
+		RecipientCBHalfOpenMaxSuccesses  *int64         `yaml:"recipientCBHalfOpenMaxSuccesses"`
+		RecipientCBOpenTimeoutBackOff    *struct {
+			Exponential *struct {
+				// TODO: make min, max, base, jitter, etc. configurable.
+			} `yaml:"exponential"`
+			Constant *time.Duration `yaml:"constant"`
+		} `yaml:"recipientCBOpenTimeoutBackOff"`
+		RecipientCBOpenTimeout *time.Duration `yaml:"recipientCBOpenTimeout"`
 	} `yaml:"bitswap"`
 }
 
@@ -196,6 +218,47 @@ func (c *Config) ToOptions() ([]cassette.Option, error) {
 		}
 		if c.Bitswap.PeerDiscoveryAddrTTL != nil {
 			opts = append(opts, cassette.WithPeerDiscoveryAddrTTL(*c.Bitswap.PeerDiscoveryAddrTTL))
+		}
+		if c.Bitswap.RecipientCBTripFunc != nil {
+			if c.Bitswap.RecipientCBTripFunc.Threshold != nil {
+				opts = append(opts, cassette.WithRecipientCBTripFunc(
+					circuitbreaker.NewTripFuncThreshold(*c.Bitswap.RecipientCBTripFunc.Threshold)))
+			} else if c.Bitswap.RecipientCBTripFunc.ConsecutiveFailures != nil {
+				opts = append(opts, cassette.WithRecipientCBTripFunc(
+					circuitbreaker.NewTripFuncConsecutiveFailures(*c.Bitswap.RecipientCBTripFunc.ConsecutiveFailures)))
+			} else if c.Bitswap.RecipientCBTripFunc.FailureRate != nil &&
+				c.Bitswap.RecipientCBTripFunc.FailureRate.Min != nil &&
+				c.Bitswap.RecipientCBTripFunc.FailureRate.Rate != nil {
+				opts = append(opts, cassette.WithRecipientCBTripFunc(
+					circuitbreaker.NewTripFuncFailureRate(
+						*c.Bitswap.RecipientCBTripFunc.FailureRate.Min,
+						*c.Bitswap.RecipientCBTripFunc.FailureRate.Rate,
+					)))
+			}
+		}
+		if c.Bitswap.RecipientCBCounterResetInterval != nil {
+			opts = append(opts, cassette.WithRecipientCBCounterResetInterval(*c.Bitswap.RecipientCBCounterResetInterval))
+		}
+		if c.Bitswap.RecipientCBFailOnContextCancel != nil {
+			opts = append(opts, cassette.WithRecipientCBFailOnContextCancel(*c.Bitswap.RecipientCBFailOnContextCancel))
+		}
+		if c.Bitswap.RecipientCBFailOnContextDeadline != nil {
+			opts = append(opts, cassette.WithRecipientCBFailOnContextDeadline(*c.Bitswap.RecipientCBFailOnContextDeadline))
+		}
+		if c.Bitswap.RecipientCBHalfOpenMaxSuccesses != nil {
+			opts = append(opts, cassette.WithRecipientCBHalfOpenMaxSuccesses(*c.Bitswap.RecipientCBHalfOpenMaxSuccesses))
+		}
+		if c.Bitswap.RecipientCBOpenTimeoutBackOff != nil {
+			if c.Bitswap.RecipientCBOpenTimeoutBackOff.Exponential != nil {
+				opts = append(opts, cassette.WithRecipientCBOpenTimeoutBackOff(backoff.NewExponentialBackOff()))
+			} else if c.Bitswap.RecipientCBOpenTimeoutBackOff.Constant != nil {
+				opts = append(opts, cassette.WithRecipientCBOpenTimeoutBackOff(
+					backoff.NewConstantBackOff(*c.Bitswap.RecipientCBOpenTimeoutBackOff.Constant)),
+				)
+			}
+		}
+		if c.Bitswap.RecipientCBOpenTimeout != nil {
+			opts = append(opts, cassette.WithRecipientCBOpenTimeout(*c.Bitswap.RecipientCBOpenTimeout))
 		}
 	}
 	return opts, nil
