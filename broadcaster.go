@@ -258,6 +258,11 @@ func (b *broadcaster) newChanneledSender(id peer.ID) *channeledSender {
 		circuitbreaker.WithOnStateChangeHookFn(func(from, to circuitbreaker.State) {
 			b.c.metrics.notifyBroadcastRecipientCBStateChanged(cs.ctx, id, from, to)
 			logger.Infow("Broadcast recipient circuit breaker state changed", "recipient", id, "from", from, "to", to)
+			switch to {
+			case circuitbreaker.StateOpen:
+				b.mailbox <- removeRecipient{id: id}
+				logger.Warnw("Removing recipient with opened circuit breaker", "recipient", id, "from", from, "to", to)
+			}
 		}),
 	)
 	return &cs
