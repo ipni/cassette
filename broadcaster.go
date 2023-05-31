@@ -5,9 +5,9 @@ import (
 	"math"
 	"time"
 
+	"github.com/ipfs/boxo/bitswap/message"
+	bitswap_message_pb "github.com/ipfs/boxo/bitswap/message/pb"
 	"github.com/ipfs/go-cid"
-	"github.com/ipfs/go-libipfs/bitswap/message"
-	bitswap_message_pb "github.com/ipfs/go-libipfs/bitswap/message/pb"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/mercari/go-circuitbreaker"
