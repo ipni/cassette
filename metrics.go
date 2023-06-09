@@ -19,6 +19,12 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 )
 
+var (
+	statusSkipped   = attribute.String("status", "skipped")
+	statusFailed    = attribute.String("status", "failed")
+	statusSucceeded = attribute.String("status", "succeeded")
+)
+
 type metrics struct {
 	c        *Cassette
 	server   *http.Server
@@ -31,8 +37,7 @@ type metrics struct {
 
 	broadcastInFlightTimeHistogram          instrument.Int64Histogram
 	broadcastBatchSizeHistogram             instrument.Int64Histogram
-	broadcastSkipCounter                    instrument.Int64Counter
-	broadcastFailureCounter                 instrument.Int64Counter
+	broadcastCidCounter                     instrument.Int64Counter
 	broadcastRecipientsUpDownCounter        instrument.Int64UpDownCounter
 	broadcastRecipientsCBStateUpDownCounter instrument.Int64UpDownCounter
 	broadcastInFlightUpDownCounter          instrument.Int64UpDownCounter
@@ -106,17 +111,10 @@ func (m *metrics) Start(_ context.Context) error {
 	); err != nil {
 		return err
 	}
-	if m.broadcastSkipCounter, err = meter.Int64Counter(
-		"ipni/cassette/broadcast_skipped_count",
+	if m.broadcastCidCounter, err = meter.Int64Counter(
+		"ipni/cassette/broadcast_cid_count",
 		instrument.WithUnit("1"),
-		instrument.WithDescription("The number of CIDs skipped broadcast."),
-	); err != nil {
-		return err
-	}
-	if m.broadcastFailureCounter, err = meter.Int64Counter(
-		"ipni/cassette/broadcast_failed_count",
-		instrument.WithUnit("1"),
-		instrument.WithDescription("The number of CIDs that failed broadcast."),
+		instrument.WithDescription("The number of CIDs that are broadcasted tagged by status."),
 	); err != nil {
 		return err
 	}
@@ -194,21 +192,23 @@ func (m *metrics) serveMux() *http.ServeMux {
 }
 
 func (m *metrics) notifyBroadcastSkipped(ctx context.Context, batchSize int64, inFlightTime time.Duration) {
-	m.broadcastInFlightTimeHistogram.Record(ctx, inFlightTime.Milliseconds(), attribute.String("status", "skipped"))
-	m.broadcastSkipCounter.Add(ctx, batchSize)
+	m.broadcastInFlightTimeHistogram.Record(ctx, inFlightTime.Milliseconds(), statusSkipped)
+	m.broadcastCidCounter.Add(ctx, batchSize, statusSkipped)
 	m.broadcastInFlightUpDownCounter.Add(ctx, -batchSize)
 }
 
 func (m *metrics) notifyBroadcastFailed(ctx context.Context, batchSize int64, err error, inFlightTime time.Duration) {
 	errKindAttr := errKindAttribute(err)
-	m.broadcastInFlightTimeHistogram.Record(ctx, inFlightTime.Milliseconds(), attribute.String("status", "failed"), errKindAttr)
-	m.broadcastFailureCounter.Add(ctx, batchSize, errKindAttr)
+	m.broadcastInFlightTimeHistogram.Record(ctx, inFlightTime.Milliseconds(), statusFailed, errKindAttr)
+	m.broadcastCidCounter.Add(ctx, batchSize, errKindAttr, statusFailed)
 	m.broadcastInFlightUpDownCounter.Add(ctx, -batchSize)
 }
 
-func (m *metrics) notifyBroadcastSucceeded(ctx context.Context, batchSize int64, wantHave bool, inFlightTime time.Duration) {
-	m.broadcastInFlightTimeHistogram.Record(ctx, inFlightTime.Milliseconds(), attribute.String("status", "succeeded"))
+func (m *metrics) notifyBroadcastSucceeded(ctx context.Context, batchSize int64, cancelCount int64, wantHave bool, inFlightTime time.Duration) {
+	m.broadcastInFlightTimeHistogram.Record(ctx, inFlightTime.Milliseconds(), statusSucceeded)
 	m.broadcastBatchSizeHistogram.Record(ctx, batchSize, attribute.Bool("want-have", wantHave))
+	m.broadcastCidCounter.Add(ctx, batchSize, statusSucceeded)
+	m.broadcastCidCounter.Add(ctx, cancelCount, statusSucceeded, attribute.Bool("cancel", true))
 	m.broadcastInFlightUpDownCounter.Add(ctx, -batchSize)
 }
 

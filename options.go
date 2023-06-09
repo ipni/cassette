@@ -46,6 +46,8 @@ type (
 		fallbackOnWantBlock          bool
 		addrFilterDisabled           bool
 
+		broadcastCancelAfter time.Duration
+
 		recipientCBTripFunc              circuitbreaker.TripFunc
 		recipientCBCounterResetInterval  time.Duration
 		recipientCBFailOnContextCancel   bool
@@ -79,6 +81,7 @@ func newOptions(o ...Option) (*options, error) {
 		maxBroadcastBatchWait:      100 * time.Millisecond,
 		peerDiscoveryInterval:      10 * time.Second,
 		peerDiscoveryAddrTTL:       10 * time.Minute,
+		broadcastCancelAfter:       5 * time.Second,
 
 		recipientCBTripFunc:              circuitbreaker.NewTripFuncConsecutiveFailures(3),
 		recipientCBCounterResetInterval:  2 * time.Second,
@@ -334,6 +337,13 @@ func WithRecipientCBOpenTimeoutBackOff(b backoff.BackOff) Option {
 func WithRecipientCBOpenTimeout(t time.Duration) Option {
 	return func(o *options) error {
 		o.recipientCBOpenTimeout = t
+		return nil
+	}
+}
+
+func WithBroadcastCancelAfter(t time.Duration) Option {
+	return func(o *options) error {
+		o.broadcastCancelAfter = t
 		return nil
 	}
 }

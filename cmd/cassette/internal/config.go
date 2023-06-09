@@ -78,6 +78,7 @@ type Config struct {
 			Constant *time.Duration `yaml:"constant"`
 		} `yaml:"recipientCBOpenTimeoutBackOff"`
 		RecipientCBOpenTimeout *time.Duration `yaml:"recipientCBOpenTimeout"`
+		BroadcastCancelAfter   *time.Duration `yaml:"broadcastCancelAfter"`
 	} `yaml:"bitswap"`
 }
 
@@ -259,6 +260,9 @@ func (c *Config) ToOptions() ([]cassette.Option, error) {
 		}
 		if c.Bitswap.RecipientCBOpenTimeout != nil {
 			opts = append(opts, cassette.WithRecipientCBOpenTimeout(*c.Bitswap.RecipientCBOpenTimeout))
+		}
+		if c.Bitswap.BroadcastCancelAfter != nil {
+			opts = append(opts, cassette.WithBroadcastCancelAfter(*c.Bitswap.BroadcastCancelAfter))
 		}
 	}
 	return opts, nil

@@ -38,10 +38,12 @@ type (
 		mailbox         chan findCids
 		c               *Cassette
 		unsentTimestamp time.Time
-		unsentCids      map[cid.Cid]struct{}
-		maxBatchSize    int
-		maxBatchWait    *time.Ticker
-		cb              *circuitbreaker.CircuitBreaker
+		// unsentCids maps the CIDs that are not sent yet to whether they should be cancelled or not.
+		unsentCids   map[cid.Cid]bool
+		maxBatchSize int
+		maxBatchWait *time.Ticker
+		cancelAfter  *time.Ticker
+		cb           *circuitbreaker.CircuitBreaker
 	}
 )
 
@@ -134,6 +136,7 @@ func (b *broadcaster) start(ctx context.Context) {
 }
 
 func (cs *channeledSender) start() {
+	cancellations := make(map[cid.Cid]struct{})
 	for {
 		select {
 		case <-cs.ctx.Done():
@@ -147,7 +150,10 @@ func (cs *channeledSender) start() {
 			}
 			for _, c := range fc.cids {
 				if _, exists := cs.unsentCids[c]; !exists {
-					cs.unsentCids[c] = struct{}{}
+					// Add as unsent with cancel set to false.
+					cs.unsentCids[c] = false
+					// Add to cancellations to be marked for cancellation later.
+					cancellations[c] = struct{}{}
 				}
 			}
 			if len(cs.unsentCids) >= cs.maxBatchSize {
@@ -156,6 +162,22 @@ func (cs *channeledSender) start() {
 		case <-cs.maxBatchWait.C:
 			if len(cs.unsentCids) != 0 {
 				cs.sendUnsent()
+			}
+		case <-cs.cancelAfter.C:
+			if len(cancellations) != 0 {
+				for c := range cancellations {
+					// When the CID has been broadcasted it gets removed from the unsent CIDs.
+					// Therefore, only cancel CIDs that are no longer present in the unsent CIDs.
+					// This won't work for CIDs that are repeatedly looked up in a short period of
+					// time. However, Cassette typically sits behind a caching layer that should
+					// cover this edge case.
+					// TODO: add caching inside Cassette to make sure this is covered regardless of
+					//       deployment topology.
+					if _, ok := cs.unsentCids[c]; !ok {
+						cs.unsentCids[c] = true
+					}
+					delete(cancellations, c)
+				}
 			}
 		}
 	}
@@ -192,9 +214,12 @@ func (cs *channeledSender) sendUnsent() {
 	defer func() {
 		cs.unsentTimestamp = time.Now()
 	}()
-	cidCount := int64(len(cs.unsentCids))
+	totalCidCount := int64(len(cs.unsentCids))
 	if !cs.cb.Ready() {
-		cs.c.metrics.notifyBroadcastFailed(cs.ctx, cidCount, circuitbreaker.ErrOpen, time.Since(cs.unsentTimestamp))
+		// Clear unsent CIDs since it will most likely take long enough for the node to become ready that
+		// lookup requests have already timed out.
+		cs.unsentCids = make(map[cid.Cid]bool)
+		cs.c.metrics.notifyBroadcastFailed(cs.ctx, totalCidCount, circuitbreaker.ErrOpen, time.Since(cs.unsentTimestamp))
 		return
 	}
 	var wantHave bool
@@ -207,8 +232,8 @@ func (cs *channeledSender) sendUnsent() {
 	} else {
 		logger.Warnw("Peer does not support Want-Haves and fallback on Want-Blocks is disabled. Skipping broadcast.", "peer", cs.id, "skipped", len(cs.unsentCids))
 		// Clear unsent CIDs.
-		cs.unsentCids = make(map[cid.Cid]struct{})
-		cs.c.metrics.notifyBroadcastSkipped(cs.ctx, cidCount, time.Since(cs.unsentTimestamp))
+		cs.unsentCids = make(map[cid.Cid]bool)
+		cs.c.metrics.notifyBroadcastSkipped(cs.ctx, totalCidCount, time.Since(cs.unsentTimestamp))
 
 		// Fail the Circuit Breaker to avoid checking whether the recipient supports Want-Haves on every send, since
 		// it is a characteristic that does not change often.
@@ -216,14 +241,20 @@ func (cs *channeledSender) sendUnsent() {
 		return
 	}
 
+	var cancelCount int64
 	msg := message.New(false)
-	for c := range cs.unsentCids {
-		msg.AddEntry(c, math.MaxInt32, wlt, false)
+	for c, cancel := range cs.unsentCids {
+		if cancel {
+			msg.Cancel(c)
+			cancelCount++
+		} else {
+			msg.AddEntry(c, math.MaxInt32, wlt, false)
+		}
 		delete(cs.unsentCids, c)
 	}
 	if err := cs.c.bsn.SendMessage(cs.ctx, cs.id, msg); err != nil {
 		logger.Errorw("Failed to send message", "to", cs.id, "err", err)
-		cs.c.metrics.notifyBroadcastFailed(cs.ctx, cidCount, err, time.Since(cs.unsentTimestamp))
+		cs.c.metrics.notifyBroadcastFailed(cs.ctx, totalCidCount, err, time.Since(cs.unsentTimestamp))
 		// SendMessage wraps the context internally with configured bitswap timeouts.
 		// Therefore, calling FailWithContext on Circuit Breaker will have no effect if deadline exceeds and would fail
 		// the Circuit Breaker regardless of what the WithFailOnContextDeadline option is set to.
@@ -231,7 +262,7 @@ func (cs *channeledSender) sendUnsent() {
 		// Regardless, do call FailWithContext so that the WithFailOnContextCancel is respected.
 		cs.cb.FailWithContext(cs.ctx)
 	} else {
-		cs.c.metrics.notifyBroadcastSucceeded(cs.ctx, cidCount, wantHave, time.Since(cs.unsentTimestamp))
+		cs.c.metrics.notifyBroadcastSucceeded(cs.ctx, totalCidCount, cancelCount, wantHave, time.Since(cs.unsentTimestamp))
 		cs.cb.Success()
 	}
 }
@@ -241,9 +272,10 @@ func (b *broadcaster) newChanneledSender(id peer.ID) *channeledSender {
 		id:           id,
 		mailbox:      make(chan findCids, b.c.broadcastSendChannelBuffer),
 		c:            b.c,
-		unsentCids:   make(map[cid.Cid]struct{}),
+		unsentCids:   make(map[cid.Cid]bool),
 		maxBatchSize: b.c.maxBroadcastBatchSize,
 		maxBatchWait: time.NewTicker(b.c.maxBroadcastBatchWait),
+		cancelAfter:  time.NewTicker(b.c.broadcastCancelAfter),
 	}
 	cs.ctx, cs.cancel = context.WithCancel(context.Background())
 
