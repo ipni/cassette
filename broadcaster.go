@@ -300,6 +300,11 @@ func (b *broadcaster) newChanneledSender(id peer.ID) *channeledSender {
 	return &cs
 }
 
-func (b *broadcaster) broadcastWant(c []cid.Cid) {
-	b.mailbox <- findCids{cids: c, timestamp: time.Now()}
+func (b *broadcaster) broadcastWant(ctx context.Context, c []cid.Cid) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case b.mailbox <- findCids{cids: c, timestamp: time.Now()}:
+		return nil
+	}
 }

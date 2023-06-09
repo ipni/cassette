@@ -110,8 +110,9 @@ func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
 			close(rch)
 		}()
 		targets := c.toFindTargets(k)
-		c.broadcaster.broadcastWant(targets)
-		<-ctx.Done()
+		if err := c.broadcaster.broadcastWant(ctx, targets); err == nil {
+			<-ctx.Done()
+		}
 		c.metrics.notifyLookupResponded(context.Background(), resultCount.Load(), timeToFirstProvider, time.Since(start))
 		// TODO add option to stop based on provider count limit
 	}()
