@@ -53,3 +53,4 @@ bitswap:
   recipientCBOpenTimeout: 1s
   recipientCBOpenTimeoutBackOff:
     exponential: {}
+  broadcastCancelAfter: 5s
