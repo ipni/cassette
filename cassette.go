@@ -77,7 +77,7 @@ func (c *Cassette) Start(ctx context.Context) error {
 
 func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
 	start := time.Now()
-	c.metrics.notifyLookupRequested(ctx)
+	c.metrics.notifyLookupRequested(context.Background())
 	var timeToFirstProvider time.Duration
 	rch := make(chan peer.AddrInfo, 1)
 	go func() {

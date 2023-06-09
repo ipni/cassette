@@ -52,5 +52,6 @@ bitswap:
   recipientCBHalfOpenMaxSuccesses: 10
   recipientCBOpenTimeout: 1s
   recipientCBOpenTimeoutBackOff:
-    exponential: {}
+    exponential: { }
+  recipientSendTimeout: 5s
   broadcastCancelAfter: 5s

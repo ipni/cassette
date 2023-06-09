@@ -55,6 +55,7 @@ type Config struct {
 		MaxBroadcastBatchWait      *time.Duration `yaml:"maxBroadcastBatchWait"`
 		FallbackOnWantBlock        *bool          `yaml:"fallbackOnWantBlock"`
 		RecipientsRefreshInterval  *time.Duration `yaml:"recipientsRefreshInterval"`
+		BroadcastChannelBuffer     *int           `yaml:"broadcastChannelBuffer"`
 		BroadcastSendChannelBuffer *int           `yaml:"sendChannelBuffer"`
 		PeerDiscoveryInterval      *time.Duration `yaml:"peerDiscoveryInterval"`
 		PeerDiscoveryAddrTTL       *time.Duration `yaml:"peerDiscoveryAddrTTL"`
@@ -78,6 +79,7 @@ type Config struct {
 			Constant *time.Duration `yaml:"constant"`
 		} `yaml:"recipientCBOpenTimeoutBackOff"`
 		RecipientCBOpenTimeout *time.Duration `yaml:"recipientCBOpenTimeout"`
+		RecipientSendTimeout   *time.Duration `yaml:"recipientSendTimeout"`
 		BroadcastCancelAfter   *time.Duration `yaml:"broadcastCancelAfter"`
 	} `yaml:"bitswap"`
 }
@@ -214,6 +216,9 @@ func (c *Config) ToOptions() ([]cassette.Option, error) {
 		if c.Bitswap.BroadcastSendChannelBuffer != nil {
 			opts = append(opts, cassette.WithBroadcastSendChannelBuffer(*c.Bitswap.BroadcastSendChannelBuffer))
 		}
+		if c.Bitswap.BroadcastChannelBuffer != nil {
+			opts = append(opts, cassette.WithBroadcastChannelBuffer(*c.Bitswap.BroadcastChannelBuffer))
+		}
 		if c.Bitswap.PeerDiscoveryInterval != nil {
 			opts = append(opts, cassette.WithPeerDiscoveryInterval(*c.Bitswap.PeerDiscoveryInterval))
 		}
@@ -263,6 +268,9 @@ func (c *Config) ToOptions() ([]cassette.Option, error) {
 		}
 		if c.Bitswap.BroadcastCancelAfter != nil {
 			opts = append(opts, cassette.WithBroadcastCancelAfter(*c.Bitswap.BroadcastCancelAfter))
+		}
+		if c.Bitswap.RecipientSendTimeout != nil {
+			opts = append(opts, cassette.WithRecipientSendTimeout(*c.Bitswap.RecipientSendTimeout))
 		}
 	}
 	return opts, nil

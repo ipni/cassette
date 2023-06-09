@@ -43,6 +43,7 @@ type (
 		maxBatchSize int
 		maxBatchWait *time.Ticker
 		cancelAfter  *time.Ticker
+		sendTimeout  time.Duration
 		cb           *circuitbreaker.CircuitBreaker
 	}
 )
@@ -50,7 +51,7 @@ type (
 func newBroadcaster(c *Cassette) *broadcaster {
 	return &broadcaster{
 		c:             c,
-		mailbox:       make(chan any, 1),
+		mailbox:       make(chan any, c.broadcastChannelBuffer),
 		refreshTicker: time.NewTicker(c.recipientsRefreshInterval),
 	}
 }
@@ -112,7 +113,7 @@ func (b *broadcaster) start(ctx context.Context) {
 						case <-ctx.Done():
 							return
 						case recipient.mailbox <- c:
-							b.c.metrics.notifyBroadcastRequested(ctx, int64(len(c.cids)))
+							b.c.metrics.notifyBroadcastRequested(context.Background(), int64(len(c.cids)))
 						}
 					}
 				case addRecipient:
@@ -122,12 +123,12 @@ func (b *broadcaster) start(ctx context.Context) {
 					cs := b.newChanneledSender(c.id)
 					go cs.start()
 					recipients[c.id] = cs
-					b.c.metrics.notifyBroadcastRecipientAdded(ctx)
+					b.c.metrics.notifyBroadcastRecipientAdded(context.Background())
 				case removeRecipient:
 					if cs, exists := recipients[c.id]; exists {
 						cs.shutdown()
 						delete(recipients, c.id)
-						b.c.metrics.notifyBroadcastRecipientRemoved(ctx)
+						b.c.metrics.notifyBroadcastRecipientRemoved(context.Background())
 					}
 				}
 			}
@@ -183,12 +184,12 @@ func (cs *channeledSender) start() {
 	}
 }
 
-func (cs *channeledSender) supportsHaves() bool {
+func (cs *channeledSender) supportsHaves(ctx context.Context) bool {
 	// Assure connection to peer before checking protocols list. Otherwise, GetProtocols
 	// silently returns empty protocols list.
 	if addrs := cs.c.h.Peerstore().Addrs(cs.id); len(addrs) == 0 {
 		return false
-	} else if err := cs.c.h.Connect(cs.ctx, peer.AddrInfo{ID: cs.id, Addrs: addrs}); err != nil {
+	} else if err := cs.c.h.Connect(ctx, peer.AddrInfo{ID: cs.id, Addrs: addrs}); err != nil {
 		logger.Errorw("Failed to connect to peer in order to determine Want-Haves support", "peer", cs.id, "err", err)
 		return false
 	}
@@ -211,7 +212,9 @@ func (cs *channeledSender) shutdown() {
 }
 
 func (cs *channeledSender) sendUnsent() {
+	ctx, cancel := context.WithTimeout(cs.ctx, cs.sendTimeout)
 	defer func() {
+		cancel()
 		cs.unsentTimestamp = time.Now()
 	}()
 	totalCidCount := int64(len(cs.unsentCids))
@@ -219,12 +222,12 @@ func (cs *channeledSender) sendUnsent() {
 		// Clear unsent CIDs since it will most likely take long enough for the node to become ready that
 		// lookup requests have already timed out.
 		cs.unsentCids = make(map[cid.Cid]bool)
-		cs.c.metrics.notifyBroadcastFailed(cs.ctx, totalCidCount, circuitbreaker.ErrOpen, time.Since(cs.unsentTimestamp))
+		cs.c.metrics.notifyBroadcastFailed(context.Background(), totalCidCount, circuitbreaker.ErrOpen, time.Since(cs.unsentTimestamp))
 		return
 	}
 	var wantHave bool
 	var wlt bitswap_message_pb.Message_Wantlist_WantType
-	if cs.supportsHaves() {
+	if cs.supportsHaves(ctx) {
 		wlt = bitswap_message_pb.Message_Wantlist_Have
 		wantHave = true
 	} else if cs.c.fallbackOnWantBlock {
@@ -233,7 +236,7 @@ func (cs *channeledSender) sendUnsent() {
 		logger.Warnw("Peer does not support Want-Haves and fallback on Want-Blocks is disabled. Skipping broadcast.", "peer", cs.id, "skipped", len(cs.unsentCids))
 		// Clear unsent CIDs.
 		cs.unsentCids = make(map[cid.Cid]bool)
-		cs.c.metrics.notifyBroadcastSkipped(cs.ctx, totalCidCount, time.Since(cs.unsentTimestamp))
+		cs.c.metrics.notifyBroadcastSkipped(context.Background(), totalCidCount, time.Since(cs.unsentTimestamp))
 
 		// Fail the Circuit Breaker to avoid checking whether the recipient supports Want-Haves on every send, since
 		// it is a characteristic that does not change often.
@@ -252,17 +255,17 @@ func (cs *channeledSender) sendUnsent() {
 		}
 		delete(cs.unsentCids, c)
 	}
-	if err := cs.c.bsn.SendMessage(cs.ctx, cs.id, msg); err != nil {
+	if err := cs.c.bsn.SendMessage(ctx, cs.id, msg); err != nil {
 		logger.Errorw("Failed to send message", "to", cs.id, "err", err)
-		cs.c.metrics.notifyBroadcastFailed(cs.ctx, totalCidCount, err, time.Since(cs.unsentTimestamp))
+		cs.c.metrics.notifyBroadcastFailed(context.Background(), totalCidCount, err, time.Since(cs.unsentTimestamp))
 		// SendMessage wraps the context internally with configured bitswap timeouts.
 		// Therefore, calling FailWithContext on Circuit Breaker will have no effect if deadline exceeds and would fail
 		// the Circuit Breaker regardless of what the WithFailOnContextDeadline option is set to.
 		// This is fine since we do want it to fail.
 		// Regardless, do call FailWithContext so that the WithFailOnContextCancel is respected.
-		cs.cb.FailWithContext(cs.ctx)
+		cs.cb.FailWithContext(ctx)
 	} else {
-		cs.c.metrics.notifyBroadcastSucceeded(cs.ctx, totalCidCount, cancelCount, wantHave, time.Since(cs.unsentTimestamp))
+		cs.c.metrics.notifyBroadcastSucceeded(context.Background(), totalCidCount, cancelCount, wantHave, time.Since(cs.unsentTimestamp))
 		cs.cb.Success()
 	}
 }
@@ -276,6 +279,7 @@ func (b *broadcaster) newChanneledSender(id peer.ID) *channeledSender {
 		maxBatchSize: b.c.maxBroadcastBatchSize,
 		maxBatchWait: time.NewTicker(b.c.maxBroadcastBatchWait),
 		cancelAfter:  time.NewTicker(b.c.broadcastCancelAfter),
+		sendTimeout:  b.c.recipientSendTimeout,
 	}
 	cs.ctx, cs.cancel = context.WithCancel(context.Background())
 
@@ -288,7 +292,7 @@ func (b *broadcaster) newChanneledSender(id peer.ID) *channeledSender {
 		circuitbreaker.WithCounterResetInterval(b.c.recipientCBCounterResetInterval),
 		circuitbreaker.WithTripFunc(b.c.recipientCBTripFunc),
 		circuitbreaker.WithOnStateChangeHookFn(func(from, to circuitbreaker.State) {
-			b.c.metrics.notifyBroadcastRecipientCBStateChanged(cs.ctx, id, from, to)
+			b.c.metrics.notifyBroadcastRecipientCBStateChanged(context.Background(), id, from, to)
 			logger.Infow("Broadcast recipient circuit breaker state changed", "recipient", id, "from", from, "to", to)
 			switch to {
 			case circuitbreaker.StateOpen:

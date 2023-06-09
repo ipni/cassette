@@ -57,7 +57,7 @@ func newReceiver(c *Cassette) (*receiver, error) {
 				}
 				switch ee := e.(type) {
 				case receivedMessageEvent:
-					c.metrics.notifyReceiverMessageReceived(r.ctx, ee.from)
+					c.metrics.notifyReceiverMessageReceived(context.Background(), ee.from)
 					hooks, ok := registry[ee.k]
 					if ok && hooks != nil {
 						for _, hook := range hooks {
@@ -157,17 +157,17 @@ func (r *receiver) ReceiveMessage(ctx context.Context, sender peer.ID, in messag
 func (r *receiver) ReceiveError(err error) {
 	// TODO hook this up to circuit breakers?
 	logger.Errorw("Received Error", "err", err)
-	r.c.metrics.notifyReceiverErrored(r.ctx, err)
+	r.c.metrics.notifyReceiverErrored(context.Background(), err)
 }
 
 func (r *receiver) PeerConnected(id peer.ID) {
 	logger.Debugw("peer connected", "id", id)
-	r.c.metrics.notifyReceiverConnected(r.ctx)
+	r.c.metrics.notifyReceiverConnected(context.Background())
 }
 
 func (r *receiver) PeerDisconnected(id peer.ID) {
 	logger.Debugw("peer disconnected", "id", id)
-	r.c.metrics.notifyReceiverDisconnected(r.ctx)
+	r.c.metrics.notifyReceiverDisconnected(context.Background())
 }
 
 func (r *receiver) registerFoundHook(ctx context.Context, k cid.Cid, f func(id peer.ID)) func() {

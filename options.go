@@ -41,6 +41,7 @@ type (
 		ipniRequireCascadeQueryParam bool
 		responseTimeout              time.Duration
 		findByMultihash              bool
+		broadcastChannelBuffer       int
 		broadcastSendChannelBuffer   int
 		recipientsRefreshInterval    time.Duration
 		fallbackOnWantBlock          bool
@@ -55,6 +56,7 @@ type (
 		recipientCBHalfOpenMaxSuccesses  int64
 		recipientCBOpenTimeoutBackOff    backoff.BackOff
 		recipientCBOpenTimeout           time.Duration
+		recipientSendTimeout             time.Duration
 
 		maxBroadcastBatchSize int
 		maxBroadcastBatchWait time.Duration
@@ -73,6 +75,7 @@ func newOptions(o ...Option) (*options, error) {
 		ipniCascadeLabel:           "legacy",
 		httpAllowOrigin:            "*",
 		responseTimeout:            5 * time.Second,
+		broadcastChannelBuffer:     100,
 		broadcastSendChannelBuffer: 100,
 		findByMultihash:            true,
 		recipientsRefreshInterval:  10 * time.Second,
@@ -90,6 +93,7 @@ func newOptions(o ...Option) (*options, error) {
 		recipientCBHalfOpenMaxSuccesses:  5,
 		recipientCBOpenTimeoutBackOff:    circuitbreaker.DefaultOpenBackOff(),
 		recipientCBOpenTimeout:           5 * time.Second,
+		recipientSendTimeout:             5 * time.Second,
 	}
 	for _, apply := range o {
 		if err := apply(&opts); err != nil {
@@ -236,6 +240,13 @@ func WithBroadcastSendChannelBuffer(b int) Option {
 	}
 }
 
+func WithBroadcastChannelBuffer(b int) Option {
+	return func(o *options) error {
+		o.broadcastChannelBuffer = b
+		return nil
+	}
+}
+
 func WithFallbackOnWantBlock(b bool) Option {
 	return func(o *options) error {
 		o.fallbackOnWantBlock = b
@@ -344,6 +355,13 @@ func WithRecipientCBOpenTimeout(t time.Duration) Option {
 func WithBroadcastCancelAfter(t time.Duration) Option {
 	return func(o *options) error {
 		o.broadcastCancelAfter = t
+		return nil
+	}
+}
+
+func WithRecipientSendTimeout(t time.Duration) Option {
+	return func(o *options) error {
+		o.recipientSendTimeout = t
 		return nil
 	}
 }
