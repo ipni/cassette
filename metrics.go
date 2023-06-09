@@ -191,25 +191,25 @@ func (m *metrics) serveMux() *http.ServeMux {
 	return mux
 }
 
-func (m *metrics) notifyBroadcastSkipped(ctx context.Context, batchSize int64, inFlightTime time.Duration) {
+func (m *metrics) notifyBroadcastSkipped(ctx context.Context, totalCidCount int64, inFlightTime time.Duration) {
 	m.broadcastInFlightTimeHistogram.Record(ctx, inFlightTime.Milliseconds(), statusSkipped)
-	m.broadcastCidCounter.Add(ctx, batchSize, statusSkipped)
-	m.broadcastInFlightUpDownCounter.Add(ctx, -batchSize)
+	m.broadcastCidCounter.Add(ctx, totalCidCount, statusSkipped)
+	m.broadcastInFlightUpDownCounter.Add(ctx, -totalCidCount)
 }
 
-func (m *metrics) notifyBroadcastFailed(ctx context.Context, batchSize int64, err error, inFlightTime time.Duration) {
+func (m *metrics) notifyBroadcastFailed(ctx context.Context, totalCidCount int64, err error, inFlightTime time.Duration) {
 	errKindAttr := errKindAttribute(err)
 	m.broadcastInFlightTimeHistogram.Record(ctx, inFlightTime.Milliseconds(), statusFailed, errKindAttr)
-	m.broadcastCidCounter.Add(ctx, batchSize, errKindAttr, statusFailed)
-	m.broadcastInFlightUpDownCounter.Add(ctx, -batchSize)
+	m.broadcastCidCounter.Add(ctx, totalCidCount, errKindAttr, statusFailed)
+	m.broadcastInFlightUpDownCounter.Add(ctx, -totalCidCount)
 }
 
-func (m *metrics) notifyBroadcastSucceeded(ctx context.Context, batchSize int64, cancelCount int64, wantHave bool, inFlightTime time.Duration) {
+func (m *metrics) notifyBroadcastSucceeded(ctx context.Context, totalCidCount int64, cancelCidCount int64, wantHave bool, inFlightTime time.Duration) {
 	m.broadcastInFlightTimeHistogram.Record(ctx, inFlightTime.Milliseconds(), statusSucceeded)
-	m.broadcastBatchSizeHistogram.Record(ctx, batchSize, attribute.Bool("want-have", wantHave))
-	m.broadcastCidCounter.Add(ctx, batchSize, statusSucceeded)
-	m.broadcastCidCounter.Add(ctx, cancelCount, statusSucceeded, attribute.Bool("cancel", true))
-	m.broadcastInFlightUpDownCounter.Add(ctx, -batchSize)
+	m.broadcastBatchSizeHistogram.Record(ctx, totalCidCount, attribute.Bool("want-have", wantHave))
+	m.broadcastCidCounter.Add(ctx, totalCidCount-cancelCidCount, statusSucceeded, attribute.Bool("cancel", false))
+	m.broadcastCidCounter.Add(ctx, cancelCidCount, statusSucceeded, attribute.Bool("cancel", true))
+	m.broadcastInFlightUpDownCounter.Add(ctx, -totalCidCount)
 }
 
 func (m *metrics) notifyBroadcastRequested(ctx context.Context, cidCount int64) {
