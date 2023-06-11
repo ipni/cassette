@@ -40,7 +40,7 @@ func newReceiver(c *Cassette) (*receiver, error) {
 	var r receiver
 	r.ctx, r.cancel = context.WithCancel(context.Background())
 	r.c = c
-	r.mailbox = make(chan any, c.receiverChannelBuffer)
+	r.mailbox = make(chan any)
 	go func() {
 		type registeredHook struct {
 			id   int64
