@@ -3,7 +3,6 @@ package cassette
 import (
 	"context"
 	"net/http"
-	"sync/atomic"
 	"time"
 
 	"github.com/ipfs/boxo/bitswap/network"
@@ -78,42 +77,60 @@ func (c *Cassette) Start(ctx context.Context) error {
 func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
 	start := time.Now()
 	c.metrics.notifyLookupRequested(context.Background())
-	var timeToFirstProvider time.Duration
 	rch := make(chan peer.AddrInfo, 1)
 	go func() {
-		var resultCount atomic.Int64
 		ctx, cancel := context.WithTimeout(ctx, c.responseTimeout)
+		defer func() {
+			cancel()
+			close(rch)
+		}()
+
+		providers, unregister, err := c.r.registerFoundHook(ctx, k)
+		if err != nil {
+			return
+		}
+		defer unregister()
+
+		var resultCount int64
+		var timeToFirstProvider time.Duration
+		defer func() {
+			c.metrics.notifyLookupResponded(context.Background(), resultCount, timeToFirstProvider, time.Since(start))
+		}()
+
+		targets := c.toFindTargets(k)
+		if err := c.broadcaster.broadcastWant(ctx, targets); err != nil {
+			return
+		}
 		providersSoFar := make(map[peer.ID]struct{})
-		unregister := c.r.registerFoundHook(ctx, k, func(id peer.ID) {
-			if _, seen := providersSoFar[id]; seen {
+		for {
+			select {
+			case <-ctx.Done():
 				return
-			}
-			providersSoFar[id] = struct{}{}
-			addrs := c.h.Peerstore().Addrs(id)
-			if !c.addrFilterDisabled {
-				addrs = multiaddr.FilterAddrs(addrs, IsPubliclyDialableAddr)
-			}
-			if len(addrs) > 0 {
-				select {
-				case <-ctx.Done():
+			case id, ok := <-providers:
+				if !ok {
 					return
-				case rch <- peer.AddrInfo{ID: id, Addrs: addrs}:
-					if resultCount.Add(1) == 1 {
-						timeToFirstProvider = time.Since(start)
+				}
+				if _, seen := providersSoFar[id]; seen {
+					continue
+				}
+				providersSoFar[id] = struct{}{}
+				addrs := c.h.Peerstore().Addrs(id)
+				if !c.addrFilterDisabled {
+					addrs = multiaddr.FilterAddrs(addrs, IsPubliclyDialableAddr)
+				}
+				if len(addrs) > 0 {
+					select {
+					case <-ctx.Done():
+						return
+					case rch <- peer.AddrInfo{ID: id, Addrs: addrs}:
+						resultCount++
+						if resultCount == 1 {
+							timeToFirstProvider = time.Since(start)
+						}
 					}
 				}
 			}
-		})
-		defer func() {
-			cancel()
-			unregister()
-			close(rch)
-		}()
-		targets := c.toFindTargets(k)
-		if err := c.broadcaster.broadcastWant(ctx, targets); err == nil {
-			<-ctx.Done()
 		}
-		c.metrics.notifyLookupResponded(context.Background(), resultCount.Load(), timeToFirstProvider, time.Since(start))
 		// TODO add option to stop based on provider count limit
 	}()
 	return rch

@@ -170,16 +170,24 @@ func (r *receiver) PeerDisconnected(id peer.ID) {
 	r.c.metrics.notifyReceiverDisconnected(context.Background())
 }
 
-func (r *receiver) registerFoundHook(ctx context.Context, k cid.Cid, f func(id peer.ID)) func() {
+func (r *receiver) registerFoundHook(ctx context.Context, k cid.Cid) (<-chan peer.ID, func(), error) {
 	id := r.nextHookID()
 	kk := r.keyFromCid(k)
+	results := make(chan peer.ID, 100)
 	select {
 	case <-ctx.Done():
-	case r.mailbox <- registerHook{k: kk, hook: f, id: id}:
+		return nil, nil, ctx.Err()
+	case r.mailbox <- registerHook{k: kk, hook: func(id peer.ID) {
+		select {
+		case <-ctx.Done():
+		case results <- id:
+		}
+	}, id: id}:
 	}
-	return func() {
+	return results, func() {
 		r.mailbox <- unregisterHook{k: kk, id: id}
-	}
+		close(results)
+	}, nil
 }
 
 func (r *receiver) nextHookID() int64 {
