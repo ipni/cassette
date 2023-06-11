@@ -55,4 +55,3 @@ bitswap:
     exponential: { }
   recipientSendTimeout: 5s
   broadcastCancelAfter: 5s
-  receiverChannelBuffer: 100
