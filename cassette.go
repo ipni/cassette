@@ -109,8 +109,6 @@ func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
 					}
 				}
 			}
-			// Note that 404s are also cached; meaning, if there is a cache record for a given CID
-			// we return it even if it has no providers.
 			return
 		}
 
@@ -158,7 +156,9 @@ func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
 
 		var returnedProviders []peer.AddrInfo
 		defer func() {
-			c.cache.putProviders(k, returnedProviders)
+			if len(returnedProviders) > 0 || c.cacheNoResults {
+				c.cache.putProviders(k, returnedProviders)
+			}
 		}()
 		for {
 			select {

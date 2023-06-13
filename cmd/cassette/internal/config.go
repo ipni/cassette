@@ -83,8 +83,9 @@ type Config struct {
 		BroadcastCancelAfter   *time.Duration `yaml:"broadcastCancelAfter"`
 	} `yaml:"bitswap"`
 	Cache *struct {
-		Size   *int           `yaml:"size"`
-		Expiry *time.Duration `yaml:"expiry"`
+		Size           *int           `yaml:"size"`
+		Expiry         *time.Duration `yaml:"expiry"`
+		CacheNoResults *bool          `yaml:"cacheNoResults"`
 	} `yaml:"cache"`
 }
 
@@ -283,6 +284,9 @@ func (c *Config) ToOptions() ([]cassette.Option, error) {
 		}
 		if c.Cache.Size != nil {
 			opts = append(opts, cassette.WithCacheSize(*c.Cache.Size))
+		}
+		if c.Cache.CacheNoResults != nil {
+			opts = append(opts, cassette.WithCacheNoResults(*c.Cache.CacheNoResults))
 		}
 	}
 	return opts, nil
