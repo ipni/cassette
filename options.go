@@ -65,8 +65,9 @@ type (
 		peerDiscoveryInterval time.Duration
 		peerDiscoveryAddrTTL  time.Duration
 
-		cacheExpiry time.Duration
-		cacheSize   int
+		cacheExpiry    time.Duration
+		cacheSize      int
+		cacheNoResults bool
 	}
 )
 
@@ -381,6 +382,12 @@ func WithCacheExpiry(t time.Duration) Option {
 func WithCacheSize(s int) Option {
 	return func(o *options) error {
 		o.cacheSize = s
+		return nil
+	}
+}
+func WithCacheNoResults(b bool) Option {
+	return func(o *options) error {
+		o.cacheNoResults = b
 		return nil
 	}
 }

@@ -58,3 +58,4 @@ bitswap:
 cache:
   expiry: 1h
   size: 1000
+  cacheNoResults: false
