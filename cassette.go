@@ -29,6 +29,7 @@ type Cassette struct {
 	discoverer  *peerDiscoverer
 
 	metrics *metrics
+	cache   *cache
 }
 
 func New(o ...Option) (*Cassette, error) {
@@ -44,8 +45,10 @@ func New(o ...Option) (*Cassette, error) {
 		Handler: c.serveMux(),
 	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
-	c.metrics, err = newMetrics(&c)
-	if err != nil {
+	if c.metrics, err = newMetrics(&c); err != nil {
+		return nil, err
+	}
+	if c.cache, err = newCache(&c); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -85,49 +88,88 @@ func (c *Cassette) Find(ctx context.Context, k cid.Cid) chan peer.AddrInfo {
 			close(rch)
 		}()
 
+		var resultCount int64
+		var timeToFirstProvider time.Duration
+		var cacheHit bool
+		defer func() {
+			c.metrics.notifyLookupResponded(context.Background(), resultCount, timeToFirstProvider, time.Since(start), cacheHit)
+		}()
+
+		// Attempt to get provider IDs from cache
+		if providers, found := c.cache.getProviders(k); found {
+			cacheHit = true
+			for _, provider := range providers {
+				select {
+				case <-ctx.Done():
+					return
+				case rch <- provider:
+					resultCount++
+					if resultCount == 1 {
+						timeToFirstProvider = time.Since(start)
+					}
+				}
+			}
+			// Note that 404s are also cached; meaning, if there is a cache record for a given CID
+			// we return it even if it has no providers.
+			return
+		}
+
 		providers, unregister, err := c.r.registerFoundHook(ctx, k)
 		if err != nil {
 			return
 		}
 		defer unregister()
 
-		var resultCount int64
-		var timeToFirstProvider time.Duration
-		defer func() {
-			c.metrics.notifyLookupResponded(context.Background(), resultCount, timeToFirstProvider, time.Since(start))
-		}()
-
 		targets := c.toFindTargets(k)
 		if err := c.broadcaster.broadcastWant(ctx, targets); err != nil {
 			return
 		}
+
 		providersSoFar := make(map[peer.ID]struct{})
+		returnIfUnseen := func(provider peer.ID) *peer.AddrInfo {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				if _, seen := providersSoFar[provider]; seen {
+					return nil
+				}
+				providersSoFar[provider] = struct{}{}
+				addrs := c.h.Peerstore().Addrs(provider)
+				if !c.addrFilterDisabled {
+					addrs = multiaddr.FilterAddrs(addrs, IsPubliclyDialableAddr)
+				}
+				if len(addrs) == 0 {
+					return nil
+				}
+				result := peer.AddrInfo{ID: provider, Addrs: addrs}
+				select {
+				case <-ctx.Done():
+					return nil
+				case rch <- result:
+					resultCount++
+					if resultCount == 1 {
+						timeToFirstProvider = time.Since(start)
+					}
+					return &result
+				}
+			}
+		}
+
+		var returnedProviders []peer.AddrInfo
+		defer func() {
+			c.cache.putProviders(k, returnedProviders)
+		}()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case id, ok := <-providers:
+			case provider, ok := <-providers:
 				if !ok {
 					return
 				}
-				if _, seen := providersSoFar[id]; seen {
-					continue
-				}
-				providersSoFar[id] = struct{}{}
-				addrs := c.h.Peerstore().Addrs(id)
-				if !c.addrFilterDisabled {
-					addrs = multiaddr.FilterAddrs(addrs, IsPubliclyDialableAddr)
-				}
-				if len(addrs) > 0 {
-					select {
-					case <-ctx.Done():
-						return
-					case rch <- peer.AddrInfo{ID: id, Addrs: addrs}:
-						resultCount++
-						if resultCount == 1 {
-							timeToFirstProvider = time.Since(start)
-						}
-					}
+				if returned := returnIfUnseen(provider); returned != nil {
+					returnedProviders = append(returnedProviders, *returned)
 				}
 			}
 		}

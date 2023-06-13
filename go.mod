@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/cenkalti/backoff/v3 v3.1.1
+	github.com/hashicorp/golang-lru/v2 v2.0.3
 	github.com/ipfs/boxo v0.8.1
 	github.com/ipfs/go-cid v0.4.0
 	github.com/ipfs/go-log/v2 v2.5.1

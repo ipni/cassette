@@ -64,6 +64,9 @@ type (
 		peerDiscoveryHost     host.Host
 		peerDiscoveryInterval time.Duration
 		peerDiscoveryAddrTTL  time.Duration
+
+		cacheExpiry time.Duration
+		cacheSize   int
 	}
 )
 
@@ -94,6 +97,8 @@ func newOptions(o ...Option) (*options, error) {
 		recipientCBOpenTimeoutBackOff:    circuitbreaker.DefaultOpenBackOff(),
 		recipientCBOpenTimeout:           5 * time.Second,
 		recipientSendTimeout:             5 * time.Second,
+		cacheExpiry:                      time.Hour,
+		cacheSize:                        1_000,
 	}
 	for _, apply := range o {
 		if err := apply(&opts); err != nil {
@@ -362,6 +367,20 @@ func WithBroadcastCancelAfter(t time.Duration) Option {
 func WithRecipientSendTimeout(t time.Duration) Option {
 	return func(o *options) error {
 		o.recipientSendTimeout = t
+		return nil
+	}
+}
+
+func WithCacheExpiry(t time.Duration) Option {
+	return func(o *options) error {
+		o.cacheExpiry = t
+		return nil
+	}
+}
+
+func WithCacheSize(s int) Option {
+	return func(o *options) error {
+		o.cacheSize = s
 		return nil
 	}
 }

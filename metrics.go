@@ -35,6 +35,8 @@ type metrics struct {
 	lookupResponseResultCountHistogram instrument.Int64Histogram
 	lookupResponseLatencyHistogram     instrument.Int64Histogram
 
+	cacheSize instrument.Int64ObservableGauge
+
 	broadcastInFlightTimeHistogram          instrument.Int64Histogram
 	broadcastBatchSizeHistogram             instrument.Int64Histogram
 	broadcastCidCounter                     instrument.Int64Counter
@@ -94,6 +96,14 @@ func (m *metrics) Start(_ context.Context) error {
 		"ipni/cassette/lookup_response_latency",
 		instrument.WithUnit("ms"),
 		instrument.WithDescription("The lookup response latency."),
+	); err != nil {
+		return err
+	}
+	if m.cacheSize, err = meter.Int64ObservableGauge(
+		"ipni/cassette/cache_size",
+		instrument.WithUnit("1"),
+		instrument.WithDescription("The number cached records."),
+		instrument.WithInt64Callback(m.reportCacheSize),
 	); err != nil {
 		return err
 	}
@@ -253,12 +263,18 @@ func (m *metrics) notifyLookupRequested(ctx context.Context) {
 	m.lookupRequestCounter.Add(ctx, 1)
 }
 
-func (m *metrics) notifyLookupResponded(ctx context.Context, resultCount int64, timeToFirstResult time.Duration, latency time.Duration) {
+func (m *metrics) notifyLookupResponded(ctx context.Context, resultCount int64, timeToFirstResult time.Duration, latency time.Duration, cacheHit bool) {
+	cacheAttr := attribute.Bool("cached", cacheHit)
 	if resultCount > 0 {
-		m.lookupResponseTTFPHistogram.Record(ctx, timeToFirstResult.Milliseconds())
+		m.lookupResponseTTFPHistogram.Record(ctx, timeToFirstResult.Milliseconds(), cacheAttr)
 	}
-	m.lookupResponseResultCountHistogram.Record(ctx, resultCount)
-	m.lookupResponseLatencyHistogram.Record(ctx, latency.Milliseconds())
+	m.lookupResponseResultCountHistogram.Record(ctx, resultCount, cacheAttr)
+	m.lookupResponseLatencyHistogram.Record(ctx, latency.Milliseconds(), cacheAttr)
+}
+
+func (m *metrics) reportCacheSize(_ context.Context, observer instrument.Int64Observer) error {
+	observer.Observe(int64(m.c.cache.len()))
+	return nil
 }
 
 func errKindAttribute(err error) attribute.KeyValue {
