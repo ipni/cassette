@@ -82,6 +82,10 @@ type Config struct {
 		RecipientSendTimeout   *time.Duration `yaml:"recipientSendTimeout"`
 		BroadcastCancelAfter   *time.Duration `yaml:"broadcastCancelAfter"`
 	} `yaml:"bitswap"`
+	Cache *struct {
+		Size   *int           `yaml:"size"`
+		Expiry *time.Duration `yaml:"expiry"`
+	} `yaml:"cache"`
 }
 
 func NewConfig(path string) (*Config, error) {
@@ -271,6 +275,14 @@ func (c *Config) ToOptions() ([]cassette.Option, error) {
 		}
 		if c.Bitswap.RecipientSendTimeout != nil {
 			opts = append(opts, cassette.WithRecipientSendTimeout(*c.Bitswap.RecipientSendTimeout))
+		}
+	}
+	if c.Cache != nil {
+		if c.Cache.Expiry != nil {
+			opts = append(opts, cassette.WithCacheExpiry(*c.Cache.Expiry))
+		}
+		if c.Cache.Size != nil {
+			opts = append(opts, cassette.WithCacheSize(*c.Cache.Size))
 		}
 	}
 	return opts, nil

@@ -55,3 +55,6 @@ bitswap:
     exponential: { }
   recipientSendTimeout: 5s
   broadcastCancelAfter: 5s
+cache:
+  expiry: 1h
+  size: 1000
