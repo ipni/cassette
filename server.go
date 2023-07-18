@@ -110,13 +110,14 @@ LOOP:
 		}
 	}
 	if err := w.Close(); err != nil {
-		switch e := err.(type) {
-		case errHttpResponse:
-			e.WriteTo(w)
-		default:
+		var apiErr *apierror.Error
+		if errors.As(err, &apiErr) {
+			http.Error(w, apiErr.Error(), apiErr.Status())
+		} else {
 			logger.Errorw("Failed to finalize lookup results", "err", err)
 			http.Error(w, "", http.StatusInternalServerError)
 		}
+		return
 	}
 }
 
