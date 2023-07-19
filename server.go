@@ -3,7 +3,6 @@ package cassette
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 
 	"github.com/ipni/go-libipni/apierror"
@@ -35,10 +34,8 @@ func (c *Cassette) serveMux() *http.ServeMux {
 func (c *Cassette) handleMh(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodOptions:
-		discardBody(r)
 		c.handleLookupOptions(w)
 	default:
-		discardBody(r)
 		http.Error(w, "", http.StatusNotFound)
 	}
 }
@@ -72,10 +69,8 @@ func (c *Cassette) handleMhSubtree(w http.ResponseWriter, r *http.Request) {
 		}
 		c.handleLookup(rwriter.NewProviderResponseWriter(rspWriter), r)
 	case http.MethodOptions:
-		discardBody(r)
 		c.handleLookupOptions(w)
 	default:
-		discardBody(r)
 		http.Error(w, "", http.StatusNotFound)
 	}
 }
@@ -130,7 +125,6 @@ func (c *Cassette) handleLookupOptions(w http.ResponseWriter) {
 }
 
 func (c *Cassette) handleReady(w http.ResponseWriter, r *http.Request) {
-	discardBody(r)
 	switch r.Method {
 	case http.MethodGet:
 		w.WriteHeader(http.StatusOK)
@@ -140,11 +134,5 @@ func (c *Cassette) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Cassette) handleCatchAll(w http.ResponseWriter, r *http.Request) {
-	discardBody(r)
 	http.Error(w, "", http.StatusNotFound)
-}
-
-func discardBody(r *http.Request) {
-	_, _ = io.Copy(io.Discard, r.Body)
-	_ = r.Body.Close()
 }
