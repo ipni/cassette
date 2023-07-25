@@ -125,12 +125,14 @@ func (c *Cassette) handleLookupOptions(w http.ResponseWriter) {
 }
 
 func (c *Cassette) handleReady(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		w.WriteHeader(http.StatusOK)
-	default:
-		http.Error(w, "", http.StatusNotFound)
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "", http.StatusMethodNotAllowed)
+		return
 	}
+
+	w.Header().Set("Cache-Control", "no-cache")
+	http.Error(w, Version, http.StatusOK)
 }
 
 func (c *Cassette) handleCatchAll(w http.ResponseWriter, r *http.Request) {
