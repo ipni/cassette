@@ -1,6 +1,6 @@
 module github.com/ipni/cassette
 
-go 1.19
+go 1.20
 
 require (
 	github.com/cenkalti/backoff/v3 v3.1.1
