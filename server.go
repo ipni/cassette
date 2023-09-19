@@ -36,7 +36,8 @@ func (c *Cassette) handleMh(w http.ResponseWriter, r *http.Request) {
 	case http.MethodOptions:
 		c.handleLookupOptions(w)
 	default:
-		http.Error(w, "", http.StatusNotFound)
+		w.Header().Set("Allow", http.MethodOptions)
+		http.Error(w, "", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -71,7 +72,9 @@ func (c *Cassette) handleMhSubtree(w http.ResponseWriter, r *http.Request) {
 	case http.MethodOptions:
 		c.handleLookupOptions(w)
 	default:
-		http.Error(w, "", http.StatusNotFound)
+		w.Header().Set("Allow", http.MethodGet)
+		w.Header().Add("Allow", http.MethodOptions)
+		http.Error(w, "", http.StatusMethodNotAllowed)
 	}
 }
 
